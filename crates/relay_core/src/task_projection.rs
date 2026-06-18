@@ -41,6 +41,8 @@ pub struct TaskProjection {
     pub pending_review_comment_count: usize,
     pub preview_targets: Vec<PreviewTargetProjection>,
     pub preview_target_count: usize,
+    #[serde(default)]
+    pub commit_draft: Option<TaskCommitDraftProjection>,
     pub failure_summary: Option<String>,
     pub last_activity_at: Timestamp,
 }
@@ -104,6 +106,12 @@ pub struct PreviewTargetProjection {
     pub uri: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskCommitDraftProjection {
+    pub title: String,
+    pub body: String,
+}
+
 impl TaskProjection {
     pub fn from_task(task: &Task) -> Self {
         let delivered_comment_ids = task
@@ -158,6 +166,7 @@ impl TaskProjection {
                 .map(PreviewTargetProjection::from_target)
                 .collect(),
             preview_target_count: task.preview_targets.len(),
+            commit_draft: None,
             failure_summary: task.failure.as_ref().map(|failure| failure.message.clone()),
             last_activity_at: task.last_activity_at,
         }

@@ -24,5 +24,5 @@ pub use task_event::{
 pub use task_projection::{
     DiffFileProjection, DiffHunkProjection, DiffLineProjection, DiffLineProjectionKind,
     DiffStatsProjection, PreviewTargetProjection, ReviewCommentProjection, StatusTone,
-    TaskDiffProjection, TaskProjection,
+    TaskCommitDraftProjection, TaskDiffProjection, TaskProjection,
 };

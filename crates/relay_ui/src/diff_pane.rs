@@ -4,7 +4,8 @@ use gpui::{
 };
 use relay_core::{
     ChangeStatus, ChangedFile, DiffFileProjection, DiffLineProjection, DiffLineProjectionKind,
-    DiffSide, LineIdentity, ReviewCommentProjection, TaskId, TaskProjection,
+    DiffSide, LineIdentity, ReviewCommentProjection, TaskCommitDraftProjection, TaskId,
+    TaskProjection,
 };
 use relay_diff::{DiffTree, DiffTreeRow, DiffTreeRowKind};
 
@@ -412,12 +413,64 @@ fn review_tab(
                 .child(div().text_sm().text_color(theme.text).child("Delivery"))
                 .child(delivery_control(theme, pending_count, deliverable_task, cx)),
         )
+        .children(
+            task.and_then(|task| task.commit_draft.as_ref())
+                .map(|draft| commit_draft_panel(theme, draft).into_any_element()),
+        )
         .child(if review_count == 0 {
             empty_state(theme, "No matching review notes", "Review list is empty.")
         } else {
             comments
         })
         .into_any_element()
+}
+
+fn commit_draft_panel(theme: RelayTheme, draft: &TaskCommitDraftProjection) -> gpui::Div {
+    div()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.panel)
+        .p_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(theme.text)
+                        .child("Commit draft"),
+                )
+                .child(review_state_badge(theme, "DRAFT", theme.accent)),
+        )
+        .child(commit_draft_field(theme, "Title", &draft.title))
+        .child(commit_draft_field(theme, "Body", &draft.body))
+}
+
+fn commit_draft_field(theme: RelayTheme, label: &'static str, value: &str) -> gpui::Div {
+    div()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.chrome)
+        .p_2()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_xs().text_color(theme.muted).child(label))
+        .child(
+            div()
+                .font_family("Consolas")
+                .text_xs()
+                .text_color(theme.text)
+                .child(value.to_string()),
+        )
 }
 
 fn filtered_changed_files(task: &TaskProjection, filter: &str) -> Vec<ChangedFile> {

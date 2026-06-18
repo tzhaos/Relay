@@ -12,8 +12,8 @@ use relay_agent::{
 use relay_core::{
     AgentRuntimeStatus, AgentSessionId, CreateTask, DiffFileProjection, DiffHunkProjection,
     DiffLineProjection, DiffLineProjectionKind, DiffStatsProjection, PreviewTargetId, ProjectId,
-    ProviderFailure, SelectedRange, Task, TaskCommand, TaskDiffProjection, TaskId, TaskProjection,
-    TaskSource, TaskStatus, TerminalSessionId,
+    ProviderFailure, SelectedRange, Task, TaskCommand, TaskCommitDraftProjection,
+    TaskDiffProjection, TaskId, TaskProjection, TaskSource, TaskStatus, TerminalSessionId,
 };
 use relay_diff::{DiffEngine, DiffLineKind, DiffSnapshot, ReviewService};
 use relay_infra::paths::RelayPaths;
@@ -548,7 +548,7 @@ impl RelayRuntime {
         Ok(tasks)
     }
 
-    fn enrich_diff_projections(&self, tasks: &mut [TaskProjection]) -> Result<()> {
+    fn enrich_diff_projections(&mut self, tasks: &mut [TaskProjection]) -> Result<()> {
         for task in tasks {
             if task.changed_file_count == 0 {
                 task.diff = TaskDiffProjection::default();
@@ -562,6 +562,13 @@ impl RelayRuntime {
             }
             let snapshot = self.diff_engine.load(&worktree_path, None)?;
             task.diff = task_diff_projection(&snapshot);
+            if let Some(source_task) = self.database.task_repository().load_task(task.id)? {
+                let draft = ReviewService::draft_commit_message(&source_task, &snapshot);
+                task.commit_draft = Some(TaskCommitDraftProjection {
+                    title: draft.title,
+                    body: draft.body,
+                });
+            }
         }
         Ok(())
     }
@@ -1369,6 +1376,43 @@ mod tests {
                 .any(|line| line.content.contains("changed")),
             "diff projection should include file content"
         );
+    }
+
+    #[test]
+    fn load_tasks_should_include_commit_draft_from_diff_snapshot() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open(database, &paths).expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Draft commit")
+            .expect("task should create");
+        let worktree_path = tasks[0]
+            .worktree_path
+            .as_ref()
+            .map(PathBuf::from)
+            .expect("worktree path should exist");
+        fs::write(worktree_path.join("README.md"), "hello\ncommit draft\n")
+            .expect("worktree file should change");
+
+        let tasks = runtime.load_tasks().expect("tasks should refresh");
+        let draft = tasks[0]
+            .commit_draft
+            .as_ref()
+            .expect("commit draft should be present");
+
+        assert_eq!(draft.title, "Update README.md");
+        assert!(draft.body.contains("Files changed: 1"));
     }
 
     #[test]
