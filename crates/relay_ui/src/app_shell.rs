@@ -32,6 +32,7 @@ pub struct AppShell {
 
 pub trait TaskDataSource {
     fn open_project(&mut self, path: &Path) -> anyhow::Result<WorkspaceData>;
+    fn refresh_changed_files(&mut self) -> anyhow::Result<Vec<TaskProjection>>;
     fn create_task(&mut self, title: &str) -> anyhow::Result<Vec<TaskProjection>>;
     fn launch_agent(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn deliver_review(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
@@ -246,6 +247,10 @@ impl AppShell {
             self.open_project_picker(cx);
             return;
         }
+        if command == WorkbenchCommand::RefreshChangedFiles {
+            self.refresh_changed_files(cx);
+            return;
+        }
         if command == WorkbenchCommand::CreateTask {
             self.create_task(cx);
             return;
@@ -325,6 +330,19 @@ impl AppShell {
             Ok(workspace) => {
                 self.view_model =
                     WorkspaceViewModel::for_project(workspace.project_label, workspace.tasks);
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn refresh_changed_files(&mut self, cx: &mut Context<Self>) {
+        match self.task_data_source.refresh_changed_files() {
+            Ok(tasks) => {
+                self.replace_tasks_preserving_active(tasks);
                 self.last_error = None;
             }
             Err(error) => {

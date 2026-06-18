@@ -655,6 +655,10 @@ impl TaskDataSource for RelayRuntime {
         self.open_project_root(path)
     }
 
+    fn refresh_changed_files(&mut self) -> Result<Vec<TaskProjection>> {
+        self.load_tasks()
+    }
+
     fn create_task(&mut self, title: &str) -> Result<Vec<TaskProjection>> {
         self.create_task_with_worktree(title)
     }

@@ -92,13 +92,20 @@ fn header(
                 )
                 .child(
                     div()
-                        .rounded_sm()
-                        .bg(theme.chrome_alt)
-                        .px_2()
-                        .py_1()
-                        .text_xs()
-                        .text_color(theme.muted)
-                        .child(active_tab.label()),
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(refresh_button(theme, cx))
+                        .child(
+                            div()
+                                .rounded_sm()
+                                .bg(theme.chrome_alt)
+                                .px_2()
+                                .py_1()
+                                .text_xs()
+                                .text_color(theme.muted)
+                                .child(active_tab.label()),
+                        ),
                 ),
         )
         .child(search_field(theme, filter, filter_focus, cx))
@@ -114,6 +121,28 @@ fn header(
                 .child(tab(theme, active_tab, ContextTab::Diff, "Diff", cx))
                 .child(tab(theme, active_tab, ContextTab::Review, "Review", cx)),
         )
+}
+
+fn refresh_button(theme: RelayTheme, cx: &mut Context<AppShell>) -> impl IntoElement {
+    div()
+        .h(px(24.0))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.panel)
+        .flex()
+        .items_center()
+        .text_xs()
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(theme.text)
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.selection))
+        .id("refresh-changed-files")
+        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::RefreshChangedFiles, cx);
+        }))
+        .child("Refresh")
 }
 
 fn search_field(

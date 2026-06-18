@@ -25,6 +25,7 @@ pub enum FocusTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkbenchCommand {
     OpenProject,
+    RefreshChangedFiles,
     ActivateTask(TaskId),
     SetPaneRoute(PaneRoute),
     SetContextTab(ContextTab),
@@ -351,6 +352,7 @@ impl WorkspaceViewModel {
                 self.focus = FocusTarget::ContextPane;
             }
             WorkbenchCommand::OpenProject => {}
+            WorkbenchCommand::RefreshChangedFiles => {}
             WorkbenchCommand::SubmitReviewDraft => {}
             WorkbenchCommand::CreateTask => {}
             WorkbenchCommand::LaunchAgent(_) => {}
