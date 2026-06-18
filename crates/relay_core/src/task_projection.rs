@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ids::{ReviewCommentId, TaskId, TerminalSessionId},
-    task::{AgentKind, ChangedFile, DiffSide, ReviewComment, Task, TaskStatus, Timestamp},
+    ids::{PreviewTargetId, ReviewCommentId, TaskId, TerminalSessionId},
+    task::{
+        AgentKind, ChangedFile, DiffSide, PreviewTarget, ReviewComment, Task, TaskStatus, Timestamp,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +34,7 @@ pub struct TaskProjection {
     pub review_comments: Vec<ReviewCommentProjection>,
     pub review_comment_count: usize,
     pub pending_review_comment_count: usize,
+    pub preview_targets: Vec<PreviewTargetProjection>,
     pub preview_target_count: usize,
     pub failure_summary: Option<String>,
     pub last_activity_at: Timestamp,
@@ -44,6 +47,13 @@ pub struct ReviewCommentProjection {
     pub line_label: String,
     pub body: String,
     pub delivered: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviewTargetProjection {
+    pub id: PreviewTargetId,
+    pub label: String,
+    pub uri: String,
 }
 
 impl TaskProjection {
@@ -89,9 +99,24 @@ impl TaskProjection {
                 .collect(),
             review_comment_count: comment_count,
             pending_review_comment_count: comment_count.saturating_sub(delivered),
+            preview_targets: task
+                .preview_targets
+                .iter()
+                .map(PreviewTargetProjection::from_target)
+                .collect(),
             preview_target_count: task.preview_targets.len(),
             failure_summary: task.failure.as_ref().map(|failure| failure.message.clone()),
             last_activity_at: task.last_activity_at,
+        }
+    }
+}
+
+impl PreviewTargetProjection {
+    fn from_target(target: &PreviewTarget) -> Self {
+        Self {
+            id: target.id,
+            label: target.label.clone(),
+            uri: target.uri.clone(),
         }
     }
 }

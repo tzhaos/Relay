@@ -6,6 +6,11 @@ use std::{
 
 use relay_core::{ChangeStatus, ChangedFile, WorktreeId, WorktreeSnapshot};
 
+pub mod remote;
+pub use remote::{
+    ExecutionHostKind, LocalExecutionHost, RemoteCommand, RemoteCommandOutput, RemoteExecutionHost,
+};
+
 pub type WorktreeResult<T> = Result<T, WorktreeError>;
 
 #[derive(Debug, thiserror::Error)]
@@ -20,6 +25,8 @@ pub enum WorktreeError {
     Dirty(PathBuf),
     #[error("git output was not valid utf-8")]
     InvalidUtf8(#[from] std::string::FromUtf8Error),
+    #[error("remote command failed: {command}\n{stderr}")]
+    RemoteCommand { command: String, stderr: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

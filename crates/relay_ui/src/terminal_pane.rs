@@ -2,6 +2,7 @@ use gpui::{IntoElement, div, prelude::*, px};
 use relay_core::TerminalSessionId;
 
 use crate::{
+    preview_pane::preview_content,
     theme::RelayTheme,
     workbench::{PaneRoute, WorkspaceViewModel},
 };
@@ -101,33 +102,43 @@ pub fn terminal_pane(
                         .child(status),
                 ),
         )
+        .child(match view_model.pane_route {
+            PaneRoute::Terminal => terminal_content(theme, title, cwd, scrollback),
+            PaneRoute::Preview => preview_content(theme, view_model.active_task()),
+        })
+}
+
+fn terminal_content(
+    theme: RelayTheme,
+    title: String,
+    cwd: String,
+    scrollback: String,
+) -> gpui::Div {
+    div()
+        .flex_1()
+        .bg(theme.bg)
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .h(px(40.0))
+                .px_4()
+                .flex()
+                .items_center()
+                .justify_between()
+                .border_b_1()
+                .border_color(theme.line)
+                .child(div().text_color(theme.text).child(title))
+                .child(div().text_sm().text_color(theme.muted).child(cwd)),
+        )
         .child(
             div()
                 .flex_1()
-                .bg(theme.bg)
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .h(px(40.0))
-                        .px_4()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .border_b_1()
-                        .border_color(theme.line)
-                        .child(div().text_color(theme.text).child(title))
-                        .child(div().text_sm().text_color(theme.muted).child(cwd)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .font_family("Consolas")
-                        .text_color(theme.terminal_text)
-                        .bg(theme.terminal_bg)
-                        .p_4()
-                        .child(scrollback),
-                ),
+                .font_family("Consolas")
+                .text_color(theme.terminal_text)
+                .bg(theme.terminal_bg)
+                .p_4()
+                .child(scrollback),
         )
 }
 

@@ -6,6 +6,7 @@ members = [
     "crates/relay_core",
     "crates/relay_diff",
     "crates/relay_persistence",
+    "crates/relay_preview",
     "crates/relay_project",
     "crates/relay_terminal",
     "crates/relay_ui",
@@ -29,6 +30,7 @@ relay_core = { path = "crates/relay_core" }
 relay_diff = { path = "crates/relay_diff" }
 relay_infra = { path = "crates/relay_infra" }
 relay_persistence = { path = "crates/relay_persistence" }
+relay_preview = { path = "crates/relay_preview" }
 relay_project = { path = "crates/relay_project" }
 relay_terminal = { path = "crates/relay_terminal" }
 relay_ui = { path = "crates/relay_ui" }

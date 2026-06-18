@@ -4413,6 +4413,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "relay_preview"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "relay_core",
+ "serde",
+ "thiserror 2.0.18",
+ "time",
+]
+
+[[package]]
 name = "relay_project"
 version = "0.1.0"
 dependencies = [

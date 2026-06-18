@@ -21,4 +21,6 @@ pub use task_event::{
     ReviewCommentAdded, ReviewDelivered, TaskArchived, TaskCreated, TaskEvent, TerminalStarted,
     WorktreeAttached,
 };
-pub use task_projection::{ReviewCommentProjection, StatusTone, TaskProjection};
+pub use task_projection::{
+    PreviewTargetProjection, ReviewCommentProjection, StatusTone, TaskProjection,
+};

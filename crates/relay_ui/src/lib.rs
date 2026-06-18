@@ -1,5 +1,6 @@
 pub mod app_shell;
 pub mod diff_pane;
+pub mod preview_pane;
 pub mod task_list;
 pub mod terminal_pane;
 pub mod theme;
