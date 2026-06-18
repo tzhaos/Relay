@@ -1,17 +1,26 @@
-use gpui::{IntoElement, div, prelude::*, px};
+use gpui::{
+    Context, InteractiveElement, IntoElement, StatefulInteractiveElement, div, prelude::*, px,
+};
 use relay_core::StatusTone;
 
 use crate::{
+    app_shell::AppShell,
     theme::RelayTheme,
-    workbench::{TaskListItem, TaskListRow, WorkspaceViewModel},
+    workbench::{TaskListItem, TaskListRow, WorkbenchCommand, WorkspaceViewModel},
 };
 
-pub fn task_list(theme: RelayTheme, view_model: &WorkspaceViewModel) -> impl IntoElement {
+pub fn task_list(
+    theme: RelayTheme,
+    view_model: &WorkspaceViewModel,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
     let mut rows = div().flex().flex_col().gap_1();
     for row in view_model.task_list_rows() {
         rows = rows.child(match row {
-            TaskListRow::Group { label, count } => group_row(theme, label, count),
-            TaskListRow::Task(item) => task_row(theme, *item),
+            TaskListRow::Group { label, count } => {
+                group_row(theme, label, count).into_any_element()
+            }
+            TaskListRow::Task(item) => task_row(theme, *item, cx).into_any_element(),
         });
     }
 
@@ -78,7 +87,8 @@ fn group_row(theme: RelayTheme, label: String, count: usize) -> gpui::Div {
         .child(count.to_string())
 }
 
-fn task_row(theme: RelayTheme, item: TaskListItem) -> gpui::Div {
+fn task_row(theme: RelayTheme, item: TaskListItem, cx: &mut Context<AppShell>) -> impl IntoElement {
+    let task_id = item.task.id;
     let status_color = status_color(theme, item.task.status_tone);
     let background = if item.active {
         theme.selection
@@ -107,6 +117,11 @@ fn task_row(theme: RelayTheme, item: TaskListItem) -> gpui::Div {
         } else {
             background
         })
+        .cursor_pointer()
+        .id(task_id.as_uuid())
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::ActivateTask(task_id), cx);
+        }))
         .child(
             div()
                 .flex()

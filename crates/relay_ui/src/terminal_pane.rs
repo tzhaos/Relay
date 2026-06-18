@@ -1,10 +1,13 @@
-use gpui::{IntoElement, div, prelude::*, px};
+use gpui::{
+    Context, InteractiveElement, IntoElement, StatefulInteractiveElement, div, prelude::*, px,
+};
 use relay_core::TerminalSessionId;
 
 use crate::{
+    app_shell::AppShell,
     preview_pane::preview_content,
     theme::RelayTheme,
-    workbench::{PaneRoute, WorkspaceViewModel},
+    workbench::{PaneRoute, WorkbenchCommand, WorkspaceViewModel},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +35,7 @@ pub fn terminal_pane(
     theme: RelayTheme,
     view_model: &WorkspaceViewModel,
     projection: &TerminalPaneProjection,
+    cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
     let status = if projection.exited {
         "EXITED"
@@ -82,12 +86,14 @@ pub fn terminal_pane(
                             view_model.pane_route,
                             PaneRoute::Terminal,
                             "Terminal",
+                            cx,
                         ))
                         .child(route_tab(
                             theme,
                             view_model.pane_route,
                             PaneRoute::Preview,
                             "Preview",
+                            cx,
                         )),
                 )
                 .child(
@@ -147,6 +153,7 @@ fn route_tab(
     active_route: PaneRoute,
     route: PaneRoute,
     label: &'static str,
+    cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
     div()
         .px_3()
@@ -168,5 +175,19 @@ fn route_tab(
         } else {
             theme.muted
         })
+        .cursor_pointer()
+        .id(("pane-route", route.index()))
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::SetPaneRoute(route), cx);
+        }))
         .child(label)
+}
+
+impl PaneRoute {
+    fn index(self) -> usize {
+        match self {
+            Self::Terminal => 0,
+            Self::Preview => 1,
+        }
+    }
 }

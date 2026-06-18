@@ -14,7 +14,7 @@ use crate::{
     task_list::task_list,
     terminal_pane::{TerminalPaneProjection, terminal_pane},
     theme::RelayTheme,
-    workbench::WorkspaceViewModel,
+    workbench::{WorkbenchCommand, WorkspaceViewModel},
 };
 
 pub struct AppShell {
@@ -107,10 +107,15 @@ impl AppShell {
             exited: false,
         }
     }
+
+    pub(crate) fn dispatch(&mut self, command: WorkbenchCommand, cx: &mut Context<Self>) {
+        self.view_model.apply_command(command);
+        cx.notify();
+    }
 }
 
 impl Render for AppShell {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .bg(self.theme.bg)
@@ -121,13 +126,14 @@ impl Render for AppShell {
                 div()
                     .flex()
                     .flex_1()
-                    .child(task_list(self.theme, &self.view_model))
+                    .child(task_list(self.theme, &self.view_model, cx))
                     .child(terminal_pane(
                         self.theme,
                         &self.view_model,
                         &self.terminal_projection(),
+                        cx,
                     ))
-                    .child(context_pane(self.theme, &self.view_model)),
+                    .child(context_pane(self.theme, &self.view_model, cx)),
             )
     }
 }

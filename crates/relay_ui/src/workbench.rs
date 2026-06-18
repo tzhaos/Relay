@@ -221,6 +221,18 @@ mod tests {
         assert_eq!(view_model.focus, FocusTarget::CommandPalette);
     }
 
+    #[test]
+    fn apply_command_should_switch_route_and_context_tab() {
+        let mut view_model =
+            WorkspaceViewModel::new(vec![demo_projection("One", AgentRuntimeStatus::Working, 0)]);
+
+        view_model.apply_command(WorkbenchCommand::SetPaneRoute(PaneRoute::Preview));
+        view_model.apply_command(WorkbenchCommand::SetContextTab(ContextTab::Review));
+
+        assert_eq!(view_model.pane_route, PaneRoute::Preview);
+        assert_eq!(view_model.context_tab, ContextTab::Review);
+    }
+
     fn demo_projection(
         title: &str,
         state: AgentRuntimeStatus,

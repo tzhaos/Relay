@@ -1,13 +1,20 @@
-use gpui::{IntoElement, div, prelude::*, px};
+use gpui::{
+    Context, InteractiveElement, IntoElement, StatefulInteractiveElement, div, prelude::*, px,
+};
 use relay_core::{ChangeStatus, ChangedFile, ReviewCommentProjection, TaskProjection};
 use relay_diff::{DiffTree, DiffTreeRow, DiffTreeRowKind};
 
 use crate::{
+    app_shell::AppShell,
     theme::RelayTheme,
-    workbench::{ContextTab, WorkspaceViewModel},
+    workbench::{ContextTab, WorkbenchCommand, WorkspaceViewModel},
 };
 
-pub fn context_pane(theme: RelayTheme, view_model: &WorkspaceViewModel) -> impl IntoElement {
+pub fn context_pane(
+    theme: RelayTheme,
+    view_model: &WorkspaceViewModel,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
     let active_task = view_model.active_task();
 
     div()
@@ -18,7 +25,7 @@ pub fn context_pane(theme: RelayTheme, view_model: &WorkspaceViewModel) -> impl 
         .bg(theme.chrome)
         .flex()
         .flex_col()
-        .child(header(theme, view_model.context_tab))
+        .child(header(theme, view_model.context_tab, cx))
         .child(match view_model.context_tab {
             ContextTab::Files => files_tab(theme, active_task),
             ContextTab::Diff => diff_tab(theme, active_task),
@@ -26,7 +33,7 @@ pub fn context_pane(theme: RelayTheme, view_model: &WorkspaceViewModel) -> impl 
         })
 }
 
-fn header(theme: RelayTheme, active_tab: ContextTab) -> gpui::Div {
+fn header(theme: RelayTheme, active_tab: ContextTab, cx: &mut Context<AppShell>) -> gpui::Div {
     div()
         .h(px(42.0))
         .px_3()
@@ -41,9 +48,9 @@ fn header(theme: RelayTheme, active_tab: ContextTab) -> gpui::Div {
                 .flex()
                 .items_center()
                 .gap_1()
-                .child(tab(theme, active_tab, ContextTab::Files, "Files"))
-                .child(tab(theme, active_tab, ContextTab::Diff, "Diff"))
-                .child(tab(theme, active_tab, ContextTab::Review, "Review")),
+                .child(tab(theme, active_tab, ContextTab::Files, "Files", cx))
+                .child(tab(theme, active_tab, ContextTab::Diff, "Diff", cx))
+                .child(tab(theme, active_tab, ContextTab::Review, "Review", cx)),
         )
 }
 
@@ -52,6 +59,7 @@ fn tab(
     active_tab: ContextTab,
     tab: ContextTab,
     label: &'static str,
+    cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
     div()
         .px_2()
@@ -68,7 +76,22 @@ fn tab(
         } else {
             theme.muted
         })
+        .cursor_pointer()
+        .id(("context-tab", tab.index()))
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::SetContextTab(tab), cx);
+        }))
         .child(label)
+}
+
+impl ContextTab {
+    fn index(self) -> usize {
+        match self {
+            Self::Files => 0,
+            Self::Diff => 1,
+            Self::Review => 2,
+        }
+    }
 }
 
 fn files_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
