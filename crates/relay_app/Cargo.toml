@@ -15,6 +15,10 @@ gpui.workspace = true
 relay_core.workspace = true
 relay_infra.workspace = true
 relay_persistence.workspace = true
+relay_project.workspace = true
 relay_ui.workspace = true
 time.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

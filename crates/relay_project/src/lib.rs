@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use relay_core::{ProjectId, WorktreeSnapshot};
+use relay_core::{ChangedFile, ProjectId, WorktreeSnapshot};
 use relay_worktree::{
     CreateWorktree, GitCli, WorktreeError, WorktreeProvider, sanitize_branch_component,
 };
@@ -86,6 +86,10 @@ where
             branch_name,
             base_ref: project.default_base_ref.clone(),
         })?)
+    }
+
+    pub fn changed_files(&self, worktree_path: &Path) -> ProjectResult<Vec<ChangedFile>> {
+        Ok(self.provider.changed_files(worktree_path)?)
     }
 }
 

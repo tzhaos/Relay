@@ -55,6 +55,7 @@ Allowed dependencies:
 - `relay_core`
 - `relay_persistence`
 - `relay_infra`
+- provider/service crates that are composed at startup, such as `relay_project`, `relay_terminal`, and `relay_agent`
 - `gpui`
 
 ### relay_ui

@@ -73,8 +73,12 @@ pub struct WorkspaceViewModel {
 
 impl WorkspaceViewModel {
     pub fn new(tasks: Vec<TaskProjection>) -> Self {
+        Self::for_project("Relay".to_string(), tasks)
+    }
+
+    pub fn for_project(project_label: String, tasks: Vec<TaskProjection>) -> Self {
         Self {
-            project_label: "Relay".to_string(),
+            project_label,
             active_task_id: tasks.first().map(|task| task.id),
             tasks,
             pane_route: PaneRoute::Terminal,

@@ -28,6 +28,7 @@ pub trait TaskDataSource {
 impl AppShell {
     pub fn open(
         cx: &mut App,
+        project_label: String,
         tasks: Vec<TaskProjection>,
         task_data_source: Box<dyn TaskDataSource>,
     ) -> anyhow::Result<()> {
@@ -45,20 +46,21 @@ impl AppShell {
                 app_id: Some("relay".to_string()),
                 ..Default::default()
             },
-            |_, cx| cx.new(|cx| Self::new(tasks, task_data_source, cx)),
+            |_, cx| cx.new(|cx| Self::new(project_label, tasks, task_data_source, cx)),
         )?;
         cx.activate(true);
         Ok(())
     }
 
     fn new(
+        project_label: String,
         tasks: Vec<TaskProjection>,
         task_data_source: Box<dyn TaskDataSource>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             theme: RelayTheme::orca(),
-            view_model: WorkspaceViewModel::new(tasks),
+            view_model: WorkspaceViewModel::for_project(project_label, tasks),
             task_data_source,
             context_filter_focus: cx.focus_handle(),
             last_error: None,
@@ -213,7 +215,8 @@ impl AppShell {
         let title = format!("New task {}", self.view_model.tasks.len() + 1);
         match self.task_data_source.create_task(&title) {
             Ok(tasks) => {
-                self.view_model = WorkspaceViewModel::new(tasks);
+                let project_label = self.view_model.project_label.clone();
+                self.view_model = WorkspaceViewModel::for_project(project_label, tasks);
                 self.last_error = None;
             }
             Err(error) => {
