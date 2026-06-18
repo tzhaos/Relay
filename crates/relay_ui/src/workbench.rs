@@ -29,6 +29,7 @@ pub enum WorkbenchCommand {
     BackspaceContextFilter,
     ClearContextFilter,
     CreateTask,
+    LaunchAgent(TaskId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,6 +210,7 @@ impl WorkspaceViewModel {
                 self.focus = FocusTarget::ContextPane;
             }
             WorkbenchCommand::CreateTask => {}
+            WorkbenchCommand::LaunchAgent(_) => {}
         }
     }
 

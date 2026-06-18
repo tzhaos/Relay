@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, VecDeque},
     io::{Read, Write},
     path::PathBuf,
@@ -9,6 +10,9 @@ use std::{
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use relay_core::TerminalSessionId;
+
+const DEVICE_STATUS_REPORT: &[u8] = b"\x1b[6n";
+const CURSOR_POSITION_REPORT: &[u8] = b"\x1b[1;1R";
 
 pub type TerminalResult<T> = Result<T, TerminalError>;
 
@@ -252,7 +256,11 @@ impl PtyProvider for TerminalRuntime {
         match &event {
             TerminalEvent::Output { session_id, data } => {
                 if let Some(session) = self.sessions.get_mut(session_id) {
-                    session.scrollback.push(data);
+                    if contains_device_status_report(data) {
+                        let _ = session.writer.write_all(CURSOR_POSITION_REPORT);
+                        let _ = session.writer.flush();
+                    }
+                    session.scrollback.push(&strip_device_status_report(data));
                 }
             }
             TerminalEvent::Title { session_id, title } => {
@@ -289,6 +297,29 @@ impl PtyProvider for TerminalRuntime {
             exited: session.exited,
         })
     }
+}
+
+fn contains_device_status_report(data: &[u8]) -> bool {
+    data.windows(DEVICE_STATUS_REPORT.len())
+        .any(|window| window == DEVICE_STATUS_REPORT)
+}
+
+fn strip_device_status_report(data: &[u8]) -> Cow<'_, [u8]> {
+    if !contains_device_status_report(data) {
+        return Cow::Borrowed(data);
+    }
+
+    let mut stripped = Vec::with_capacity(data.len());
+    let mut index = 0;
+    while index < data.len() {
+        if data[index..].starts_with(DEVICE_STATUS_REPORT) {
+            index += DEVICE_STATUS_REPORT.len();
+        } else {
+            stripped.push(data[index]);
+            index += 1;
+        }
+    }
+    Cow::Owned(stripped)
 }
 
 struct TerminalSession {
@@ -435,6 +466,13 @@ mod tests {
                 .expect_err("duplicate logical id should fail"),
             TerminalError::SessionAlreadyExists(id) if id == session_id
         ));
+    }
+
+    #[test]
+    fn terminal_output_should_strip_cursor_position_queries_from_scrollback() {
+        let visible = strip_device_status_report(b"hello \x1b[6nworld");
+
+        assert_eq!(visible.as_ref(), b"hello world");
     }
 
     #[cfg(windows)]

@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
+relay_agent.workspace = true
 relay_core.workspace = true
 relay_infra.workspace = true
 relay_persistence.workspace = true

@@ -1,7 +1,7 @@
 use gpui::{
     Context, InteractiveElement, IntoElement, StatefulInteractiveElement, div, prelude::*, px,
 };
-use relay_core::TerminalSessionId;
+use relay_core::{TaskProjection, TaskStatus, TerminalSessionId};
 
 use crate::{
     app_shell::AppShell,
@@ -54,6 +54,12 @@ pub fn terminal_pane(
     } else {
         projection.cwd.clone()
     };
+    let launchable_task = view_model.active_task().filter(|task| {
+        task.status == TaskStatus::ReadyForAgent
+            && task.agent.is_none()
+            && projection.connected
+            && !projection.exited
+    });
     div()
         .flex_1()
         .min_w_0()
@@ -105,6 +111,11 @@ pub fn terminal_pane(
                                 .text_sm()
                                 .text_color(theme.muted)
                                 .child(cwd.clone()),
+                        )
+                        .children(
+                            launchable_task.map(|task| {
+                                launch_agent_button(theme, task, cx).into_any_element()
+                            }),
                         )
                         .child(
                             div()
@@ -202,6 +213,33 @@ fn route_tab(
             this.dispatch(WorkbenchCommand::SetPaneRoute(route), cx);
         }))
         .child(label)
+}
+
+fn launch_agent_button(
+    theme: RelayTheme,
+    task: &TaskProjection,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
+    let task_id = task.id;
+    div()
+        .h(px(24.0))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.selection_line)
+        .bg(theme.panel)
+        .text_xs()
+        .text_color(theme.text)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .flex()
+        .items_center()
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.selection))
+        .id(task_id.as_uuid())
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::LaunchAgent(task_id), cx);
+        }))
+        .child("Launch")
 }
 
 impl PaneRoute {
