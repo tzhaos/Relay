@@ -5,9 +5,12 @@ use relay_agent::{
     AgentLaunchPlan, AgentRegistry, PromptDelivery, RuntimeEnvironment, initial_prompt_request,
 };
 use relay_core::{
-    AgentRuntimeStatus, AgentSessionId, CreateTask, ProjectId, ProviderFailure, Task, TaskCommand,
-    TaskId, TaskProjection, TaskSource, TaskStatus, TerminalSessionId,
+    AgentRuntimeStatus, AgentSessionId, CreateTask, DiffFileProjection, DiffHunkProjection,
+    DiffLineProjection, DiffLineProjectionKind, DiffStatsProjection, ProjectId, ProviderFailure,
+    Task, TaskCommand, TaskDiffProjection, TaskId, TaskProjection, TaskSource, TaskStatus,
+    TerminalSessionId,
 };
+use relay_diff::{DiffEngine, DiffLineKind, DiffSnapshot};
 use relay_infra::paths::RelayPaths;
 use relay_persistence::RelayDatabase;
 use relay_project::{CreateTaskWorktree, Project, ProjectService};
@@ -26,6 +29,7 @@ const TERMINAL_SCROLLBACK_LIMIT: usize = 128 * 1024;
 pub struct RelayRuntime {
     database: RelayDatabase,
     project_service: ProjectService,
+    diff_engine: DiffEngine,
     terminal_runtime: TerminalRuntime,
     agent_registry: AgentRegistry,
     terminal_task_ids: HashMap<TerminalSessionId, TaskId>,
@@ -55,6 +59,7 @@ impl RelayRuntime {
         let mut runtime = Self {
             database,
             project_service,
+            diff_engine: DiffEngine::default(),
             terminal_runtime: TerminalRuntime::new(),
             agent_registry,
             terminal_task_ids,
@@ -71,7 +76,7 @@ impl RelayRuntime {
 
     pub fn load_tasks(&mut self) -> Result<Vec<TaskProjection>> {
         self.refresh_changed_files()?;
-        Ok(self.database.task_repository().list_tasks()?)
+        self.list_task_projections()
     }
 
     fn create_task_with_worktree(&mut self, title: &str) -> Result<Vec<TaskProjection>> {
@@ -122,13 +127,15 @@ impl RelayRuntime {
         }
 
         let projection = TaskProjection::from_task(&task);
-        let mut repository = self.database.task_repository();
-        repository.append_events(&events)?;
-        repository.save_snapshot(&projection)?;
+        {
+            let mut repository = self.database.task_repository();
+            repository.append_events(&events)?;
+            repository.save_snapshot(&projection)?;
+        }
         if let Some(session_id) = task.terminal_session_id {
             self.terminal_task_ids.insert(session_id, task.id);
         }
-        Ok(repository.list_tasks()?)
+        self.list_task_projections()
     }
 
     fn launch_agent_for_task(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
@@ -170,10 +177,12 @@ impl RelayRuntime {
         events.extend(status_events);
 
         let projection = TaskProjection::from_task(&task);
-        let mut repository = self.database.task_repository();
-        repository.append_events(&events)?;
-        repository.save_snapshot(&projection)?;
-        Ok(repository.list_tasks()?)
+        {
+            let mut repository = self.database.task_repository();
+            repository.append_events(&events)?;
+            repository.save_snapshot(&projection)?;
+        }
+        self.list_task_projections()
     }
 
     fn refresh_changed_files(&mut self) -> Result<()> {
@@ -262,6 +271,30 @@ impl RelayRuntime {
             }
         }
 
+        Ok(())
+    }
+
+    fn list_task_projections(&mut self) -> Result<Vec<TaskProjection>> {
+        let mut tasks = self.database.task_repository().list_tasks()?;
+        self.enrich_diff_projections(&mut tasks)?;
+        Ok(tasks)
+    }
+
+    fn enrich_diff_projections(&self, tasks: &mut [TaskProjection]) -> Result<()> {
+        for task in tasks {
+            if task.changed_file_count == 0 {
+                task.diff = TaskDiffProjection::default();
+                continue;
+            }
+            let Some(worktree_path) = task.worktree_path.as_ref().map(PathBuf::from) else {
+                continue;
+            };
+            if !worktree_path.exists() {
+                continue;
+            }
+            let snapshot = self.diff_engine.load(&worktree_path, None)?;
+            task.diff = task_diff_projection(&snapshot);
+        }
         Ok(())
     }
 
@@ -485,6 +518,51 @@ fn load_terminal_task_ids(
         .collect())
 }
 
+fn task_diff_projection(snapshot: &DiffSnapshot) -> TaskDiffProjection {
+    TaskDiffProjection {
+        files: snapshot
+            .files
+            .iter()
+            .map(|file| DiffFileProjection {
+                path: file.display_path().to_string(),
+                status: file.status,
+                is_binary: file.is_binary,
+                hunks: file
+                    .hunks
+                    .iter()
+                    .map(|hunk| DiffHunkProjection {
+                        header: hunk.header.clone(),
+                        lines: hunk
+                            .lines
+                            .iter()
+                            .map(|line| DiffLineProjection {
+                                kind: diff_line_kind(line.kind),
+                                old_line: line.old_line,
+                                new_line: line.new_line,
+                                content: line.content.clone(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        stats: DiffStatsProjection {
+            files_changed: snapshot.stats.files_changed,
+            additions: snapshot.stats.additions,
+            deletions: snapshot.stats.deletions,
+        },
+    }
+}
+
+fn diff_line_kind(kind: DiffLineKind) -> DiffLineProjectionKind {
+    match kind {
+        DiffLineKind::Context => DiffLineProjectionKind::Context,
+        DiffLineKind::Added => DiffLineProjectionKind::Added,
+        DiffLineKind::Deleted => DiffLineProjectionKind::Deleted,
+        DiffLineKind::NoNewline => DiffLineProjectionKind::NoNewline,
+    }
+}
+
 fn apply_events(task: &mut Task, events: &[relay_core::TaskEvent]) -> Result<()> {
     for event in events {
         task.apply(event)?;
@@ -658,6 +736,14 @@ mod tests {
         let tasks = runtime.load_tasks().expect("tasks should load");
 
         assert_eq!(tasks[0].changed_file_count, 1);
+        assert_eq!(tasks[0].diff.stats.files_changed, 1);
+        assert!(
+            tasks[0].diff.files[0].hunks[0]
+                .lines
+                .iter()
+                .any(|line| line.content.contains("changed")),
+            "diff projection should include file content"
+        );
     }
 
     #[test]

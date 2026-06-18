@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ids::{PreviewTargetId, ReviewCommentId, TaskId, TerminalSessionId},
     task::{
-        AgentKind, ChangedFile, DiffSide, PreviewTarget, ReviewComment, Task, TaskStatus, Timestamp,
+        AgentKind, ChangeStatus, ChangedFile, DiffSide, PreviewTarget, ReviewComment, Task,
+        TaskStatus, Timestamp,
     },
 };
 
@@ -33,6 +34,8 @@ pub struct TaskProjection {
     pub worktree_branch: Option<String>,
     pub changed_files: Vec<ChangedFile>,
     pub changed_file_count: usize,
+    #[serde(default)]
+    pub diff: TaskDiffProjection,
     pub review_comments: Vec<ReviewCommentProjection>,
     pub review_comment_count: usize,
     pub pending_review_comment_count: usize,
@@ -40,6 +43,49 @@ pub struct TaskProjection {
     pub preview_target_count: usize,
     pub failure_summary: Option<String>,
     pub last_activity_at: Timestamp,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskDiffProjection {
+    pub files: Vec<DiffFileProjection>,
+    pub stats: DiffStatsProjection,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffStatsProjection {
+    pub files_changed: usize,
+    pub additions: usize,
+    pub deletions: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffFileProjection {
+    pub path: String,
+    pub status: ChangeStatus,
+    pub hunks: Vec<DiffHunkProjection>,
+    pub is_binary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffHunkProjection {
+    pub header: String,
+    pub lines: Vec<DiffLineProjection>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiffLineProjectionKind {
+    Context,
+    Added,
+    Deleted,
+    NoNewline,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffLineProjection {
+    pub kind: DiffLineProjectionKind,
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +138,7 @@ impl TaskProjection {
                 .map(|worktree| worktree.branch.clone()),
             changed_files: task.changed_files.clone(),
             changed_file_count: task.changed_files.len(),
+            diff: TaskDiffProjection::default(),
             review_comments: task
                 .diff_review
                 .comments

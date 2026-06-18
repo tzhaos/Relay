@@ -2,7 +2,10 @@ use gpui::{
     Context, CursorStyle, FocusHandle, InteractiveElement, IntoElement, StatefulInteractiveElement,
     div, prelude::*, px,
 };
-use relay_core::{ChangeStatus, ChangedFile, ReviewCommentProjection, TaskProjection};
+use relay_core::{
+    ChangeStatus, ChangedFile, DiffFileProjection, DiffLineProjection, DiffLineProjectionKind,
+    ReviewCommentProjection, TaskProjection,
+};
 use relay_diff::{DiffTree, DiffTreeRow, DiffTreeRowKind};
 
 use crate::{
@@ -242,14 +245,14 @@ fn files_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> 
 }
 
 fn diff_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> gpui::Div {
-    let mut hunks = div().flex().flex_col().gap_2();
-    let mut hunk_count = 0;
-    if let Some(task) = task {
-        let changed_files = filtered_changed_files(task, filter);
-        for file in &changed_files {
-            hunk_count += 1;
-            hunks = hunks.child(hunk_card(theme, file));
-        }
+    let diff_files = filtered_diff_files(task, filter);
+    let file_count = diff_files.len();
+    let (additions, deletions) = task
+        .map(|task| (task.diff.stats.additions, task.diff.stats.deletions))
+        .unwrap_or_default();
+    let mut files = div().flex().flex_col().gap_2();
+    for file in &diff_files {
+        files = files.child(diff_file(theme, file));
     }
 
     div()
@@ -259,24 +262,11 @@ fn diff_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> g
         .flex_col()
         .gap_3()
         .child(summary(theme, task))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .text_color(theme.text)
-                .child("Changed files")
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted)
-                        .child(hunk_count.to_string()),
-                ),
-        )
-        .child(if hunk_count == 0 {
+        .child(diff_stats_row(theme, file_count, additions, deletions))
+        .child(if file_count == 0 {
             empty_state(theme, "No matching diffs", "Changed file list is empty.")
         } else {
-            hunks
+            files
         })
 }
 
@@ -343,6 +333,21 @@ fn filtered_changed_files(task: &TaskProjection, filter: &str) -> Vec<ChangedFil
         .iter()
         .filter(|file| file.path.to_lowercase().contains(&filter))
         .cloned()
+        .collect()
+}
+
+fn filtered_diff_files<'a>(
+    task: Option<&'a TaskProjection>,
+    filter: &str,
+) -> Vec<&'a DiffFileProjection> {
+    let Some(task) = task else {
+        return Vec::new();
+    };
+    let filter = filter.trim().to_lowercase();
+    task.diff
+        .files
+        .iter()
+        .filter(|file| filter.is_empty() || file.path.to_lowercase().contains(&filter))
         .collect()
 }
 
@@ -471,8 +476,49 @@ fn tree_row(theme: RelayTheme, row: &DiffTreeRow) -> gpui::Div {
     }
 }
 
-fn hunk_card(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
+fn diff_stats_row(
+    theme: RelayTheme,
+    file_count: usize,
+    additions: usize,
+    deletions: usize,
+) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .text_color(theme.text)
+        .child("Diff")
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_xs()
+                .text_color(theme.muted)
+                .child(format!("{file_count} files"))
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme.accent)
+                        .child(format!("+{additions}")),
+                )
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme.danger)
+                        .child(format!("-{deletions}")),
+                ),
+        )
+}
+
+fn diff_file(theme: RelayTheme, file: &DiffFileProjection) -> gpui::Div {
     let (label, color) = change_label(theme, file.status);
+    let mut hunks = div().flex().flex_col().gap_1();
+    for hunk in &file.hunks {
+        hunks = hunks.child(diff_hunk(theme, hunk));
+    }
+
     div()
         .rounded_sm()
         .border_1()
@@ -503,12 +549,91 @@ fn hunk_card(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
                         .child(file.path.clone()),
                 ),
         )
-        .child(
+        .child(if file.is_binary {
             div()
                 .font_family("Consolas")
                 .text_xs()
                 .text_color(theme.muted)
-                .child(diff_body_state(file.status)),
+                .child("binary file")
+        } else if file.hunks.is_empty() {
+            div()
+                .font_family("Consolas")
+                .text_xs()
+                .text_color(theme.muted)
+                .child("no line hunks")
+        } else {
+            hunks
+        })
+}
+
+fn diff_hunk(theme: RelayTheme, hunk: &relay_core::DiffHunkProjection) -> gpui::Div {
+    let mut lines = div().flex().flex_col();
+    for line in &hunk.lines {
+        lines = lines.child(diff_line(theme, line));
+    }
+
+    div()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.panel)
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .px_2()
+                .py_1()
+                .font_family("Consolas")
+                .text_xs()
+                .text_color(theme.muted)
+                .bg(theme.chrome)
+                .child(hunk.header.clone()),
+        )
+        .child(lines)
+}
+
+fn diff_line(theme: RelayTheme, line: &DiffLineProjection) -> gpui::Div {
+    let (marker, color, background) = match line.kind {
+        DiffLineProjectionKind::Added => ("+", theme.accent, theme.selection),
+        DiffLineProjectionKind::Deleted => ("-", theme.danger, theme.chrome_alt),
+        DiffLineProjectionKind::NoNewline => ("\\", theme.muted, theme.panel),
+        DiffLineProjectionKind::Context => (" ", theme.muted, theme.panel),
+    };
+    let line_label = match (line.old_line, line.new_line) {
+        (Some(old), Some(new)) => format!("{old:>3} {new:>3}"),
+        (Some(old), None) => format!("{old:>3}    "),
+        (None, Some(new)) => format!("    {new:>3}"),
+        (None, None) => "       ".to_string(),
+    };
+
+    div()
+        .min_w_0()
+        .bg(background)
+        .px_2()
+        .py_0p5()
+        .flex()
+        .items_start()
+        .gap_2()
+        .font_family("Consolas")
+        .text_xs()
+        .child(
+            div()
+                .flex_shrink_0()
+                .w(px(54.0))
+                .text_color(theme.muted)
+                .child(line_label),
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .w(px(10.0))
+                .text_color(color)
+                .child(marker),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .text_color(theme.text)
+                .child(line.content.clone()),
         )
 }
 
@@ -597,14 +722,5 @@ fn change_label(theme: RelayTheme, status: ChangeStatus) -> (&'static str, gpui:
         ChangeStatus::Deleted => ("D", theme.danger),
         ChangeStatus::Renamed => ("R", theme.warning),
         ChangeStatus::Untracked => ("U", theme.accent),
-    }
-}
-
-fn diff_body_state(status: ChangeStatus) -> &'static str {
-    match status {
-        ChangeStatus::Added | ChangeStatus::Untracked => "content diff pending",
-        ChangeStatus::Modified => "line diff not loaded",
-        ChangeStatus::Deleted => "deleted file body not loaded",
-        ChangeStatus::Renamed => "rename details not loaded",
     }
 }

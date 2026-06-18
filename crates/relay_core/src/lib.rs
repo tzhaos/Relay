@@ -22,5 +22,7 @@ pub use task_event::{
     WorktreeAttached,
 };
 pub use task_projection::{
-    PreviewTargetProjection, ReviewCommentProjection, StatusTone, TaskProjection,
+    DiffFileProjection, DiffHunkProjection, DiffLineProjection, DiffLineProjectionKind,
+    DiffStatsProjection, PreviewTargetProjection, ReviewCommentProjection, StatusTone,
+    TaskDiffProjection, TaskProjection,
 };
