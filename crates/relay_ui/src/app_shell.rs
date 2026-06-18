@@ -523,11 +523,7 @@ impl AppShell {
             return;
         }
 
-        let active_task_id = self.view_model.active_task_id;
-        self.view_model.tasks = tasks;
-        self.view_model.active_task_id = active_task_id
-            .filter(|task_id| self.view_model.tasks.iter().any(|task| task.id == *task_id))
-            .or_else(|| self.view_model.tasks.first().map(|task| task.id));
+        self.view_model.replace_tasks_preserving_active(tasks);
     }
 
     fn write_terminal(

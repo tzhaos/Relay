@@ -134,9 +134,10 @@ impl WorkspaceViewModel {
     }
 
     pub fn for_project(project_label: String, tasks: Vec<TaskProjection>) -> Self {
+        let active_task_id = preferred_active_task_id(&tasks, None);
         Self {
             project_label,
-            active_task_id: tasks.first().map(|task| task.id),
+            active_task_id,
             tasks,
             pane_route: PaneRoute::Terminal,
             context_tab: ContextTab::Files,
@@ -150,6 +151,24 @@ impl WorkspaceViewModel {
     pub fn active_task(&self) -> Option<&TaskProjection> {
         let active_task_id = self.active_task_id?;
         self.tasks.iter().find(|task| task.id == active_task_id)
+    }
+
+    pub fn replace_tasks_preserving_active(&mut self, tasks: Vec<TaskProjection>) {
+        if tasks.is_empty() {
+            return;
+        }
+
+        let previous_active_task_id = self.active_task_id;
+        self.tasks = tasks;
+        self.active_task_id = preferred_active_task_id(&self.tasks, previous_active_task_id);
+        if self
+            .review_draft
+            .target
+            .as_ref()
+            .is_some_and(|target| Some(target.task_id) != self.active_task_id)
+        {
+            self.review_draft = ReviewDraftState::default();
+        }
     }
 
     pub fn active_worktree_label(&self) -> String {
@@ -437,6 +456,25 @@ fn can_archive_task(task: &TaskProjection) -> bool {
     task.status != TaskStatus::Archived
 }
 
+fn preferred_active_task_id(
+    tasks: &[TaskProjection],
+    current_task_id: Option<TaskId>,
+) -> Option<TaskId> {
+    current_task_id
+        .filter(|task_id| {
+            tasks
+                .iter()
+                .any(|task| task.id == *task_id && task.status != TaskStatus::Archived)
+        })
+        .or_else(|| {
+            tasks
+                .iter()
+                .find(|task| task.status != TaskStatus::Archived)
+                .map(|task| task.id)
+        })
+        .or_else(|| tasks.first().map(|task| task.id))
+}
+
 fn worktree_name(path: &str) -> String {
     path.rsplit(['\\', '/'])
         .find(|segment| !segment.is_empty())
@@ -508,6 +546,33 @@ mod tests {
 
         assert_eq!(view_model.active_task_id, Some(target_id));
         assert_eq!(view_model.focus, FocusTarget::Terminal);
+    }
+
+    #[test]
+    fn for_project_should_choose_first_unarchived_task_as_active() {
+        let archived = archived_projection("Archived");
+        let working = demo_projection("Working", AgentRuntimeStatus::Working, 0);
+        let expected_id = working.id;
+
+        let view_model = WorkspaceViewModel::new(vec![archived, working]);
+
+        assert_eq!(view_model.active_task_id, Some(expected_id));
+    }
+
+    #[test]
+    fn replace_tasks_preserving_active_should_move_off_archived_task() {
+        let first = demo_projection("First", AgentRuntimeStatus::Working, 0);
+        let second = demo_projection("Second", AgentRuntimeStatus::Working, 0);
+        let first_id = first.id;
+        let second_id = second.id;
+        let mut view_model = WorkspaceViewModel::new(vec![first, second.clone()]);
+
+        view_model.replace_tasks_preserving_active(vec![
+            archived_projection_with_id("First", first_id),
+            second,
+        ]);
+
+        assert_eq!(view_model.active_task_id, Some(second_id));
     }
 
     #[test]
@@ -685,6 +750,18 @@ mod tests {
         TaskProjection::from_task(&task)
     }
 
+    fn archived_projection_with_id(title: &str, task_id: TaskId) -> TaskProjection {
+        let mut task = demo_task_with_id(title, task_id, AgentRuntimeStatus::Done, 0);
+        apply(
+            &mut task,
+            TaskCommand::Archive {
+                now: Timestamp::UNIX_EPOCH,
+            },
+        );
+
+        TaskProjection::from_task(&task)
+    }
+
     fn review_target(task_id: TaskId) -> ReviewDraftTarget {
         ReviewDraftTarget {
             task_id,
@@ -706,9 +783,18 @@ mod tests {
     }
 
     fn demo_task(title: &str, state: AgentRuntimeStatus, review_count: usize) -> Task {
+        demo_task_with_id(title, TaskId::new(), state, review_count)
+    }
+
+    fn demo_task_with_id(
+        title: &str,
+        task_id: TaskId,
+        state: AgentRuntimeStatus,
+        review_count: usize,
+    ) -> Task {
         let now = Timestamp::UNIX_EPOCH;
         let (mut task, _) = Task::create(CreateTask {
-            id: None,
+            id: Some(task_id),
             project_id: ProjectId::new(),
             title: title.to_string(),
             source: TaskSource::Manual,
