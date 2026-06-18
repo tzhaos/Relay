@@ -90,6 +90,7 @@ pub fn terminal_pane(
                             view_model.pane_route,
                             PaneRoute::Terminal,
                             "Terminal",
+                            terminal_focus,
                             cx,
                         ))
                         .child(route_tab(
@@ -97,6 +98,7 @@ pub fn terminal_pane(
                             view_model.pane_route,
                             PaneRoute::Preview,
                             "Preview",
+                            terminal_focus,
                             cx,
                         )),
                 )
@@ -294,8 +296,10 @@ fn route_tab(
     active_route: PaneRoute,
     route: PaneRoute,
     label: &'static str,
+    terminal_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
+    let focus_handle = terminal_focus.clone();
     div()
         .h(px(26.0))
         .px_3()
@@ -319,8 +323,11 @@ fn route_tab(
         .cursor_pointer()
         .hover(|style| style.bg(theme.panel))
         .id(("pane-route", route.index()))
-        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
             this.dispatch(WorkbenchCommand::SetPaneRoute(route), cx);
+            if route == PaneRoute::Terminal {
+                window.focus(&focus_handle);
+            }
         }))
         .child(label)
 }

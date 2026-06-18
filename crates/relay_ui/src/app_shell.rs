@@ -467,7 +467,12 @@ impl Render for AppShell {
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .child(task_list(self.theme, &self.view_model, cx))
+                    .child(task_list(
+                        self.theme,
+                        &self.view_model,
+                        self.terminal_focus(),
+                        cx,
+                    ))
                     .child(terminal_pane(
                         self.theme,
                         &self.view_model,

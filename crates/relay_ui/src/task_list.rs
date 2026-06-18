@@ -1,5 +1,6 @@
 use gpui::{
-    Context, InteractiveElement, IntoElement, StatefulInteractiveElement, div, prelude::*, px,
+    Context, FocusHandle, InteractiveElement, IntoElement, StatefulInteractiveElement, div,
+    prelude::*, px,
 };
 use relay_core::StatusTone;
 
@@ -12,6 +13,7 @@ use crate::{
 pub fn task_list(
     theme: RelayTheme,
     view_model: &WorkspaceViewModel,
+    terminal_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
     let summary = view_model.status_summary();
@@ -26,7 +28,7 @@ pub fn task_list(
         .flex_col()
         .child(left_header(theme, view_model))
         .child(project_section(theme, view_model))
-        .child(task_section(theme, view_model, cx))
+        .child(task_section(theme, view_model, terminal_focus, cx))
         .child(workspace_metrics(theme, &summary))
 }
 
@@ -138,6 +140,7 @@ fn project_section(theme: RelayTheme, view_model: &WorkspaceViewModel) -> gpui::
 fn task_section(
     theme: RelayTheme,
     view_model: &WorkspaceViewModel,
+    terminal_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
 ) -> gpui::Div {
     div()
@@ -164,12 +167,13 @@ fn task_section(
                         .child(create_task_button(theme, cx)),
                 ),
         )
-        .child(task_rows(theme, view_model, cx))
+        .child(task_rows(theme, view_model, terminal_focus, cx))
 }
 
 fn task_rows(
     theme: RelayTheme,
     view_model: &WorkspaceViewModel,
+    terminal_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
 ) -> gpui::Div {
     let mut rows = div().flex().flex_col().gap_1();
@@ -181,7 +185,9 @@ fn task_rows(
             TaskListRow::Group { label, count } => {
                 group_row(theme, label, count).into_any_element()
             }
-            TaskListRow::Task(item) => task_row(theme, *item, cx).into_any_element(),
+            TaskListRow::Task(item) => {
+                task_row(theme, *item, terminal_focus, cx).into_any_element()
+            }
         });
     }
 
@@ -395,9 +401,15 @@ fn empty_state(theme: RelayTheme, title: &'static str, detail: &'static str) -> 
         .child(div().text_xs().text_color(theme.muted).child(detail))
 }
 
-fn task_row(theme: RelayTheme, item: TaskListItem, cx: &mut Context<AppShell>) -> impl IntoElement {
+fn task_row(
+    theme: RelayTheme,
+    item: TaskListItem,
+    terminal_focus: &FocusHandle,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
     let task_id = item.task.id;
     let status_color = status_color(theme, item.task.status_tone);
+    let focus_handle = terminal_focus.clone();
     let background = if item.active {
         theme.selection
     } else {
@@ -432,8 +444,9 @@ fn task_row(theme: RelayTheme, item: TaskListItem, cx: &mut Context<AppShell>) -
                 .border_color(theme.selection_line)
         })
         .id(task_id.as_uuid())
-        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
             this.dispatch(WorkbenchCommand::ActivateTask(task_id), cx);
+            window.focus(&focus_handle);
         }))
         .child(
             div()
