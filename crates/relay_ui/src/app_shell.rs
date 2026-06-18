@@ -510,7 +510,7 @@ fn header_stat(theme: RelayTheme, label: &'static str, value: String) -> gpui::D
 }
 
 fn window_controls(theme: RelayTheme, window: &Window) -> gpui::Div {
-    let max_label = if window.is_maximized() { "[]" } else { "[ ]" };
+    let max_label = if window.is_maximized() { "❐" } else { "□" };
 
     div()
         .h_full()
@@ -520,7 +520,7 @@ fn window_controls(theme: RelayTheme, window: &Window) -> gpui::Div {
         .child(window_control_button(
             theme,
             WindowControlArea::Min,
-            "_",
+            "−",
             false,
         ))
         .child(window_control_button(
@@ -532,7 +532,7 @@ fn window_controls(theme: RelayTheme, window: &Window) -> gpui::Div {
         .child(window_control_button(
             theme,
             WindowControlArea::Close,
-            "X",
+            "×",
             true,
         ))
 }
@@ -549,7 +549,7 @@ fn window_control_button(
         .flex()
         .items_center()
         .justify_center()
-        .text_sm()
+        .text_lg()
         .text_color(theme.muted)
         .window_control_area(area)
         .hover(move |style| {
