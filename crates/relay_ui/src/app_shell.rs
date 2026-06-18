@@ -19,6 +19,7 @@ pub struct AppShell {
     theme: RelayTheme,
     view_model: WorkspaceViewModel,
     task_data_source: Box<dyn TaskDataSource>,
+    terminal_focus: FocusHandle,
     context_filter_focus: FocusHandle,
     last_error: Option<String>,
     _runtime_poll_task: GpuiTask<()>,
@@ -29,6 +30,8 @@ pub trait TaskDataSource {
     fn launch_agent(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn deliver_review(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn attach_worktree_preview(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
+    fn write_terminal(&mut self, session_id: TerminalSessionId, bytes: &[u8])
+    -> anyhow::Result<()>;
     fn poll_runtime(&mut self) -> anyhow::Result<bool>;
     fn terminal_projection(
         &mut self,
@@ -89,6 +92,7 @@ impl AppShell {
             theme: RelayTheme::orca(),
             view_model: WorkspaceViewModel::for_project(project_label, tasks),
             task_data_source,
+            terminal_focus: cx.focus_handle(),
             context_filter_focus: cx.focus_handle(),
             last_error: None,
             _runtime_poll_task: runtime_poll_task,
@@ -227,9 +231,17 @@ impl AppShell {
             self.attach_worktree_preview(task_id, cx);
             return;
         }
+        if let WorkbenchCommand::WriteTerminal(session_id, bytes) = command {
+            self.write_terminal(session_id, &bytes, cx);
+            return;
+        }
 
         self.view_model.apply_command(command);
         cx.notify();
+    }
+
+    pub(crate) fn terminal_focus(&self) -> &FocusHandle {
+        &self.terminal_focus
     }
 
     pub(crate) fn context_filter_focus(&self) -> &FocusHandle {
@@ -348,6 +360,25 @@ impl AppShell {
         cx.notify();
     }
 
+    fn write_terminal(
+        &mut self,
+        session_id: TerminalSessionId,
+        bytes: &[u8],
+        cx: &mut Context<Self>,
+    ) {
+        match self.task_data_source.write_terminal(session_id, bytes) {
+            Ok(()) => {
+                if self.last_error.take().is_some() {
+                    cx.notify();
+                }
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+                cx.notify();
+            }
+        }
+    }
+
     fn poll_runtime(&mut self, cx: &mut Context<Self>) {
         match self.task_data_source.poll_runtime() {
             Ok(true) => {
@@ -441,6 +472,7 @@ impl Render for AppShell {
                         self.theme,
                         &self.view_model,
                         &terminal_projection,
+                        self.terminal_focus(),
                         cx,
                     ))
                     .child(context_pane(

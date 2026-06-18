@@ -440,6 +440,23 @@ impl RelayRuntime {
         }
     }
 
+    fn write_terminal_input(&mut self, session_id: TerminalSessionId, bytes: &[u8]) -> Result<()> {
+        if !self.terminal_runtime.has_session(session_id) {
+            let task = self
+                .task_for_terminal(session_id)?
+                .context("terminal session is not attached to a task")?;
+            let worktree_path = task
+                .worktree
+                .as_ref()
+                .map(|worktree| PathBuf::from(&worktree.path))
+                .context("task has no worktree")?;
+            self.spawn_terminal_with_id(session_id, worktree_path)?;
+        }
+
+        self.terminal_runtime.write(session_id, bytes)?;
+        Ok(())
+    }
+
     fn agent_launch_plan(&self, task: &Task, cwd: PathBuf) -> Result<AgentLaunchPlan> {
         let env = RuntimeEnvironment::current()?;
         let availability = self
@@ -542,6 +559,10 @@ impl TaskDataSource for RelayRuntime {
 
     fn attach_worktree_preview(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
         self.attach_worktree_preview_for_task(task_id)
+    }
+
+    fn write_terminal(&mut self, session_id: TerminalSessionId, bytes: &[u8]) -> Result<()> {
+        self.write_terminal_input(session_id, bytes)
     }
 
     fn poll_runtime(&mut self) -> Result<bool> {
@@ -886,6 +907,59 @@ mod tests {
             .expect("terminal should be live");
 
         assert!(projection.connected);
+    }
+
+    #[test]
+    fn write_terminal_input_should_send_bytes_to_task_pty() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open(database, &paths).expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Type in terminal")
+            .expect("task should create");
+        let session_id = tasks[0]
+            .terminal_session_id
+            .expect("terminal id should be attached");
+
+        runtime
+            .write_terminal_input(session_id, b"echo relay-input")
+            .expect("terminal input should write");
+        runtime
+            .write_terminal_input(session_id, terminal_submit_sequence())
+            .expect("terminal enter should write");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut scrollback = String::new();
+        while Instant::now() < deadline {
+            runtime
+                .drain_terminal_events()
+                .expect("terminal events should drain");
+            scrollback = runtime
+                .terminal_projection_for(session_id)
+                .expect("terminal projection should load")
+                .expect("terminal should be connected")
+                .scrollback;
+            if scrollback.contains("relay-input") {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        assert!(
+            scrollback.contains("relay-input"),
+            "scrollback did not contain echoed input: {scrollback:?}"
+        );
     }
 
     #[test]
