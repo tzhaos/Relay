@@ -116,4 +116,36 @@ impl TaskEvent {
             Self::ProviderFailed(event) => event.task_id,
         }
     }
+
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::TaskCreated(_) => "task.created",
+            Self::WorktreeAttached(_) => "worktree.attached",
+            Self::TerminalStarted(_) => "terminal.started",
+            Self::AgentStarted(_) => "agent.started",
+            Self::AgentStatusChanged(_) => "agent.status_changed",
+            Self::ChangedFilesUpdated(_) => "changed_files.updated",
+            Self::ReviewCommentAdded(_) => "review.comment_added",
+            Self::ReviewDelivered(_) => "review.delivered",
+            Self::PreviewAttached(_) => "preview.attached",
+            Self::TaskArchived(_) => "task.archived",
+            Self::ProviderFailed(_) => "provider.failed",
+        }
+    }
+
+    pub fn occurred_at(&self) -> crate::Timestamp {
+        match self {
+            Self::TaskCreated(event) => event.occurred_at,
+            Self::WorktreeAttached(event) => event.occurred_at,
+            Self::TerminalStarted(event) => event.occurred_at,
+            Self::AgentStarted(event) => event.occurred_at,
+            Self::AgentStatusChanged(event) => event.update.observed_at,
+            Self::ChangedFilesUpdated(event) => event.occurred_at,
+            Self::ReviewCommentAdded(event) => event.comment.created_at,
+            Self::ReviewDelivered(event) => event.occurred_at,
+            Self::PreviewAttached(event) => event.occurred_at,
+            Self::TaskArchived(event) => event.occurred_at,
+            Self::ProviderFailed(event) => event.occurred_at,
+        }
+    }
 }

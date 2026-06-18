@@ -13,5 +13,6 @@ path = "src/main.rs"
 anyhow.workspace = true
 gpui.workspace = true
 relay_infra.workspace = true
+relay_persistence.workspace = true
 relay_ui.workspace = true
 tracing.workspace = true

@@ -39,4 +39,8 @@ impl RelayPaths {
             .with_context(|| format!("failed to create log dir {}", self.log_dir.display()))?;
         Ok(())
     }
+
+    pub fn database_path(&self) -> PathBuf {
+        self.data_dir.join("relay.sqlite3")
+    }
 }

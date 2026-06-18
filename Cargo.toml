@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/relay_app",
     "crates/relay_core",
+    "crates/relay_persistence",
     "crates/relay_ui",
     "crates/relay_infra",
 ]
@@ -19,8 +20,12 @@ directories = "6"
 gpui = "0.2.2"
 relay_core = { path = "crates/relay_core" }
 relay_infra = { path = "crates/relay_infra" }
+relay_persistence = { path = "crates/relay_persistence" }
 relay_ui = { path = "crates/relay_ui" }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3.27.0"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros", "serde"] }
 tracing = "0.1"
