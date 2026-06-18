@@ -246,6 +246,34 @@ impl RelayRuntime {
         self.list_task_projections()
     }
 
+    fn archive_task_for_task(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
+        let mut task = self
+            .database
+            .task_repository()
+            .load_task(task_id)?
+            .context("task not found")?;
+        let terminal_session_id = task.terminal_session_id;
+        let events = task.handle(TaskCommand::Archive {
+            now: OffsetDateTime::now_utc(),
+        })?;
+        apply_events(&mut task, &events)?;
+        let projection = TaskProjection::from_task(&task);
+        {
+            let mut repository = self.database.task_repository();
+            repository.append_events(&events)?;
+            repository.save_snapshot(&projection)?;
+        }
+
+        if let Some(session_id) = terminal_session_id {
+            self.terminal_task_ids.remove(&session_id);
+            if self.terminal_runtime.has_session(session_id) {
+                self.terminal_runtime.kill(session_id)?;
+            }
+        }
+
+        self.list_task_projections()
+    }
+
     fn add_review_comment_for_target(
         &mut self,
         target: ReviewDraftTarget,
@@ -614,6 +642,10 @@ impl TaskDataSource for RelayRuntime {
 
     fn deliver_review(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
         self.deliver_review_for_task(task_id)
+    }
+
+    fn archive_task(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
+        self.archive_task_for_task(task_id)
     }
 
     fn add_review_comment(
@@ -1279,6 +1311,59 @@ mod tests {
             error.to_string().contains("task has no active agent"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn archive_task_should_persist_status_and_stop_terminal() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Archive terminal")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+        let session_id = tasks[0]
+            .terminal_session_id
+            .expect("terminal should be attached");
+
+        let tasks = runtime
+            .archive_task_for_task(task_id)
+            .expect("task should archive");
+        let task = tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .expect("task should remain listed");
+        let persisted = runtime
+            .database
+            .task_repository()
+            .load_task(task_id)
+            .expect("task should load")
+            .expect("task should exist");
+        let terminal = runtime
+            .terminal_runtime
+            .snapshot(session_id)
+            .expect("terminal snapshot should remain inspectable");
+
+        assert_eq!(task.status, TaskStatus::Archived);
+        assert_eq!(persisted.status, TaskStatus::Archived);
+        assert!(terminal.exited, "archiving should stop the task terminal");
+        assert!(!runtime.terminal_task_ids.contains_key(&session_id));
     }
 
     #[test]

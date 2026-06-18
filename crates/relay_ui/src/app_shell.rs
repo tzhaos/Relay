@@ -31,6 +31,7 @@ pub trait TaskDataSource {
     fn create_task(&mut self, title: &str) -> anyhow::Result<Vec<TaskProjection>>;
     fn launch_agent(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn deliver_review(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
+    fn archive_task(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn add_review_comment(
         &mut self,
         target: ReviewDraftTarget,
@@ -241,6 +242,10 @@ impl AppShell {
             self.deliver_review(task_id, cx);
             return;
         }
+        if let WorkbenchCommand::ArchiveTask(task_id) = command {
+            self.archive_task(task_id, cx);
+            return;
+        }
         if command == WorkbenchCommand::SubmitReviewDraft {
             self.submit_review_draft(cx);
             return;
@@ -431,6 +436,19 @@ impl AppShell {
 
     fn deliver_review(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         match self.task_data_source.deliver_review(task_id) {
+            Ok(tasks) => {
+                self.replace_tasks_preserving_active(tasks);
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn archive_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
+        match self.task_data_source.archive_task(task_id) {
             Ok(tasks) => {
                 self.replace_tasks_preserving_active(tasks);
                 self.last_error = None;

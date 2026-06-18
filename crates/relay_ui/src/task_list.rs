@@ -228,18 +228,18 @@ fn workspace_metrics(
         .text_color(theme.muted)
         .child(metric_pill(
             theme,
-            "Active",
-            summary.active_count.to_string(),
+            "Working",
+            summary.working_count.to_string(),
         ))
         .child(metric_pill(
             theme,
-            "Attention",
-            summary.attention_count.to_string(),
+            "Waiting",
+            summary.waiting_count.to_string(),
         ))
         .child(metric_pill(
             theme,
-            "Review",
-            summary.review_count.to_string(),
+            "Reviewing",
+            summary.reviewing_count.to_string(),
         ))
 }
 
@@ -604,10 +604,21 @@ fn task_row(
                 .child(
                     div()
                         .flex_shrink_0()
-                        .text_xs()
-                        .text_color(status_color)
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(item.task.status_label),
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(status_color)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .child(item.task.status_label),
+                        )
+                        .children(
+                            (item.active && item.can_archive).then(|| {
+                                archive_task_button(theme, task_id, cx).into_any_element()
+                            }),
+                        ),
                 ),
         )
         .child(
@@ -632,6 +643,33 @@ fn task_row(
                 .child(item.changed_label)
                 .child(item.review_label),
         )
+}
+
+fn archive_task_button(
+    theme: RelayTheme,
+    task_id: relay_core::TaskId,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
+    div()
+        .h(px(22.0))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.chrome_alt)
+        .flex()
+        .items_center()
+        .text_xs()
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(theme.muted)
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.panel).text_color(theme.text))
+        .id((gpui::ElementId::from(task_id.as_uuid()), "archive-task"))
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::ArchiveTask(task_id), cx);
+            cx.stop_propagation();
+        }))
+        .child("Archive")
 }
 
 fn status_color(theme: RelayTheme, tone: StatusTone) -> gpui::Hsla {

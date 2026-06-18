@@ -43,6 +43,7 @@ pub enum WorkbenchCommand {
     CreateTask,
     LaunchAgent(TaskId),
     DeliverReview(TaskId),
+    ArchiveTask(TaskId),
     AttachWorktreePreview(TaskId),
     OpenPreviewTarget {
         task_id: TaskId,
@@ -91,6 +92,7 @@ pub enum TaskListRow {
 pub struct TaskListItem {
     pub task: TaskProjection,
     pub active: bool,
+    pub can_archive: bool,
     pub agent_label: String,
     pub worktree_label: String,
     pub changed_label: String,
@@ -100,9 +102,12 @@ pub struct TaskListItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceStatusSummary {
     pub task_count: usize,
-    pub active_count: usize,
-    pub attention_count: usize,
-    pub review_count: usize,
+    pub working_count: usize,
+    pub waiting_count: usize,
+    pub reviewing_count: usize,
+    pub done_count: usize,
+    pub failed_count: usize,
+    pub archived_count: usize,
     pub changed_file_count: usize,
     pub pending_review_count: usize,
     pub attached_terminal_count: usize,
@@ -177,9 +182,12 @@ impl WorkspaceViewModel {
     }
 
     pub fn status_summary(&self) -> WorkspaceStatusSummary {
-        let mut active_count = 0;
-        let mut attention_count = 0;
-        let mut review_count = 0;
+        let mut working_count = 0;
+        let mut waiting_count = 0;
+        let mut reviewing_count = 0;
+        let mut done_count = 0;
+        let mut failed_count = 0;
+        let mut archived_count = 0;
         let mut changed_file_count = 0;
         let mut pending_review_count = 0;
         let mut attached_terminal_count = 0;
@@ -187,9 +195,12 @@ impl WorkspaceViewModel {
 
         for task in &self.tasks {
             match task_bucket(task) {
-                TaskBucket::Active => active_count += 1,
-                TaskBucket::Attention => attention_count += 1,
-                TaskBucket::Review => review_count += 1,
+                TaskBucket::Working => working_count += 1,
+                TaskBucket::Waiting => waiting_count += 1,
+                TaskBucket::Reviewing => reviewing_count += 1,
+                TaskBucket::Done => done_count += 1,
+                TaskBucket::Failed => failed_count += 1,
+                TaskBucket::Archived => archived_count += 1,
             }
             changed_file_count += task.changed_file_count;
             pending_review_count += task.pending_review_comment_count;
@@ -217,9 +228,12 @@ impl WorkspaceViewModel {
 
         WorkspaceStatusSummary {
             task_count: self.tasks.len(),
-            active_count,
-            attention_count,
-            review_count,
+            working_count,
+            waiting_count,
+            reviewing_count,
+            done_count,
+            failed_count,
+            archived_count,
             changed_file_count,
             pending_review_count,
             attached_terminal_count,
@@ -320,6 +334,7 @@ impl WorkspaceViewModel {
             WorkbenchCommand::CreateTask => {}
             WorkbenchCommand::LaunchAgent(_) => {}
             WorkbenchCommand::DeliverReview(_) => {}
+            WorkbenchCommand::ArchiveTask(_) => {}
             WorkbenchCommand::AttachWorktreePreview(_) => {}
             WorkbenchCommand::OpenPreviewTarget { .. } => {}
             WorkbenchCommand::WriteTerminal(_, _) => {}
@@ -328,21 +343,30 @@ impl WorkspaceViewModel {
 
     pub fn task_list_rows(&self) -> Vec<TaskListRow> {
         let mut rows = Vec::new();
-        let mut active = Vec::new();
+        let mut working = Vec::new();
         let mut waiting = Vec::new();
-        let mut review = Vec::new();
+        let mut reviewing = Vec::new();
+        let mut done = Vec::new();
+        let mut failed = Vec::new();
+        let mut archived = Vec::new();
 
         for task in &self.tasks {
             match task_bucket(task) {
-                TaskBucket::Active => active.push(task),
-                TaskBucket::Attention => waiting.push(task),
-                TaskBucket::Review => review.push(task),
+                TaskBucket::Working => working.push(task),
+                TaskBucket::Waiting => waiting.push(task),
+                TaskBucket::Reviewing => reviewing.push(task),
+                TaskBucket::Done => done.push(task),
+                TaskBucket::Failed => failed.push(task),
+                TaskBucket::Archived => archived.push(task),
             }
         }
 
-        append_group_rows(&mut rows, "Active", active, self.active_task_id);
-        append_group_rows(&mut rows, "Needs attention", waiting, self.active_task_id);
-        append_group_rows(&mut rows, "Review", review, self.active_task_id);
+        append_group_rows(&mut rows, "Working", working, self.active_task_id);
+        append_group_rows(&mut rows, "Waiting", waiting, self.active_task_id);
+        append_group_rows(&mut rows, "Reviewing", reviewing, self.active_task_id);
+        append_group_rows(&mut rows, "Done", done, self.active_task_id);
+        append_group_rows(&mut rows, "Failed", failed, self.active_task_id);
+        append_group_rows(&mut rows, "Archived", archived, self.active_task_id);
         rows
     }
 }
@@ -365,6 +389,7 @@ fn append_group_rows(
         TaskListRow::Task(Box::new(TaskListItem {
             task: task.clone(),
             active: Some(task.id) == active_task_id,
+            can_archive: can_archive_task(task),
             agent_label: task
                 .agent
                 .as_ref()
@@ -383,22 +408,33 @@ fn append_group_rows(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskBucket {
-    Active,
-    Attention,
-    Review,
+    Working,
+    Waiting,
+    Reviewing,
+    Done,
+    Failed,
+    Archived,
 }
 
 fn task_bucket(task: &TaskProjection) -> TaskBucket {
-    if task.review_comment_count > 0 || task.pending_review_comment_count > 0 {
-        TaskBucket::Review
-    } else if matches!(
-        task.status,
-        TaskStatus::WaitingForUser | TaskStatus::Stale | TaskStatus::Blocked | TaskStatus::Failed
-    ) {
-        TaskBucket::Attention
-    } else {
-        TaskBucket::Active
+    match task.status {
+        TaskStatus::CreatingWorktree | TaskStatus::StartingAgent | TaskStatus::Working => {
+            TaskBucket::Working
+        }
+        TaskStatus::Draft
+        | TaskStatus::ReadyForAgent
+        | TaskStatus::WaitingForUser
+        | TaskStatus::Blocked
+        | TaskStatus::Stale => TaskBucket::Waiting,
+        TaskStatus::Reviewing | TaskStatus::ReadyToCommit => TaskBucket::Reviewing,
+        TaskStatus::Done => TaskBucket::Done,
+        TaskStatus::Failed => TaskBucket::Failed,
+        TaskStatus::Archived => TaskBucket::Archived,
     }
+}
+
+fn can_archive_task(task: &TaskProjection) -> bool {
+    !matches!(task.status, TaskStatus::Archived | TaskStatus::Failed)
 }
 
 fn worktree_name(path: &str) -> String {
@@ -427,11 +463,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_list_rows_should_group_working_waiting_and_review_tasks() {
+    fn task_list_rows_should_group_task_lifecycle_states() {
         let tasks = vec![
             demo_projection("Working", AgentRuntimeStatus::Working, 0),
             demo_projection("Waiting", AgentRuntimeStatus::Waiting, 0),
             demo_projection("Review", AgentRuntimeStatus::Working, 2),
+            demo_projection("Done", AgentRuntimeStatus::Done, 0),
+            failed_projection("Failed"),
+            archived_projection("Archived"),
         ];
         let view_model = WorkspaceViewModel::new(tasks);
         let rows = view_model.task_list_rows();
@@ -443,7 +482,17 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(group_labels, vec!["Active", "Needs attention", "Review"]);
+        assert_eq!(
+            group_labels,
+            vec![
+                "Working",
+                "Waiting",
+                "Reviewing",
+                "Done",
+                "Failed",
+                "Archived"
+            ]
+        );
     }
 
     #[test]
@@ -475,9 +524,12 @@ mod tests {
             summary,
             WorkspaceStatusSummary {
                 task_count: 3,
-                active_count: 1,
-                attention_count: 1,
-                review_count: 1,
+                working_count: 1,
+                waiting_count: 1,
+                reviewing_count: 1,
+                done_count: 0,
+                failed_count: 0,
+                archived_count: 0,
                 changed_file_count: 0,
                 pending_review_count: 2,
                 attached_terminal_count: 3,
@@ -593,6 +645,58 @@ mod tests {
         state: AgentRuntimeStatus,
         review_count: usize,
     ) -> TaskProjection {
+        TaskProjection::from_task(&demo_task(title, state, review_count))
+    }
+
+    fn failed_projection(title: &str) -> TaskProjection {
+        let mut task = demo_task(title, AgentRuntimeStatus::Working, 0);
+        apply(
+            &mut task,
+            TaskCommand::MarkFailed {
+                failure: relay_core::ProviderFailure {
+                    provider: Some("test".to_string()),
+                    message: "provider failed".to_string(),
+                },
+                now: Timestamp::UNIX_EPOCH,
+            },
+        );
+
+        TaskProjection::from_task(&task)
+    }
+
+    fn archived_projection(title: &str) -> TaskProjection {
+        let mut task = demo_task(title, AgentRuntimeStatus::Done, 0);
+        apply(
+            &mut task,
+            TaskCommand::Archive {
+                now: Timestamp::UNIX_EPOCH,
+            },
+        );
+
+        TaskProjection::from_task(&task)
+    }
+
+    fn review_target(task_id: TaskId) -> ReviewDraftTarget {
+        ReviewDraftTarget {
+            task_id,
+            line: LineIdentity {
+                path: "src/lib.rs".to_string(),
+                side: DiffSide::New,
+                old_line: None,
+                new_line: Some(42),
+                hunk_header: "@@ -40,1 +42,1 @@".to_string(),
+            },
+            selected_text: Some("let value = compute();".to_string()),
+        }
+    }
+
+    fn apply(task: &mut Task, command: TaskCommand) {
+        for event in task.handle(command).expect("command should be valid") {
+            task.apply(&event).expect("event should apply");
+        }
+    }
+
+    fn demo_task(title: &str, state: AgentRuntimeStatus, review_count: usize) -> Task {
         let now = Timestamp::UNIX_EPOCH;
         let (mut task, _) = Task::create(CreateTask {
             id: None,
@@ -655,26 +759,6 @@ mod tests {
             );
         }
 
-        TaskProjection::from_task(&task)
-    }
-
-    fn review_target(task_id: TaskId) -> ReviewDraftTarget {
-        ReviewDraftTarget {
-            task_id,
-            line: LineIdentity {
-                path: "src/lib.rs".to_string(),
-                side: DiffSide::New,
-                old_line: None,
-                new_line: Some(42),
-                hunk_header: "@@ -40,1 +42,1 @@".to_string(),
-            },
-            selected_text: Some("let value = compute();".to_string()),
-        }
-    }
-
-    fn apply(task: &mut Task, command: TaskCommand) {
-        for event in task.handle(command).expect("command should be valid") {
-            task.apply(&event).expect("event should apply");
-        }
+        task
     }
 }
