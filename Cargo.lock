@@ -4348,6 +4348,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "relay_project"
+version = "0.1.0"
+dependencies = [
+ "relay_core",
+ "relay_worktree",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "relay_ui"
 version = "0.1.0"
 dependencies = [
@@ -4355,6 +4365,15 @@ dependencies = [
  "gpui",
  "relay_core",
  "relay_infra",
+]
+
+[[package]]
+name = "relay_worktree"
+version = "0.1.0"
+dependencies = [
+ "relay_core",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

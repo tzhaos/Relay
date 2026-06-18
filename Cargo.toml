@@ -4,7 +4,9 @@ members = [
     "crates/relay_app",
     "crates/relay_core",
     "crates/relay_persistence",
+    "crates/relay_project",
     "crates/relay_ui",
+    "crates/relay_worktree",
     "crates/relay_infra",
 ]
 default-members = ["crates/relay_app"]
@@ -21,7 +23,9 @@ gpui = "0.2.2"
 relay_core = { path = "crates/relay_core" }
 relay_infra = { path = "crates/relay_infra" }
 relay_persistence = { path = "crates/relay_persistence" }
+relay_project = { path = "crates/relay_project" }
 relay_ui = { path = "crates/relay_ui" }
+relay_worktree = { path = "crates/relay_worktree" }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
