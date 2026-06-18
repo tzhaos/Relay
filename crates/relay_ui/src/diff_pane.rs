@@ -324,7 +324,7 @@ fn review_tab(
     });
     let mut comments = div().flex().flex_col().gap_2();
     for comment in &review_comments {
-        comments = comments.child(review_comment(theme, comment));
+        comments = comments.child(review_comment(theme, comment, cx));
     }
 
     div()
@@ -1058,7 +1058,12 @@ fn save_review_button(theme: RelayTheme, cx: &mut Context<AppShell>) -> impl Int
         .child("Save")
 }
 
-fn review_comment(theme: RelayTheme, comment: &ReviewCommentProjection) -> gpui::Div {
+fn review_comment(
+    theme: RelayTheme,
+    comment: &ReviewCommentProjection,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
+    let path = comment.path.clone();
     div()
         .rounded_sm()
         .border_1()
@@ -1068,6 +1073,15 @@ fn review_comment(theme: RelayTheme, comment: &ReviewCommentProjection) -> gpui:
         .flex()
         .flex_col()
         .gap_2()
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.panel).border_color(theme.selection_line))
+        .id((
+            gpui::ElementId::from(comment.id.as_uuid()),
+            "review-comment",
+        ))
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::OpenChangedFile(path.clone()), cx);
+        }))
         .child(
             div()
                 .flex()
