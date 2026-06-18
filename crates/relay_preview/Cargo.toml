@@ -9,6 +9,7 @@ publish.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+open.workspace = true
 regex.workspace = true
 relay_core.workspace = true
 serde.workspace = true

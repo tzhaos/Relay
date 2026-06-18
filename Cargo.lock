@@ -4425,6 +4425,7 @@ dependencies = [
 name = "relay_preview"
 version = "0.1.0"
 dependencies = [
+ "open",
  "regex",
  "relay_core",
  "serde",

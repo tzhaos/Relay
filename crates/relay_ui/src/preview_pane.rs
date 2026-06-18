@@ -1,7 +1,7 @@
 use gpui::{
     Context, InteractiveElement, IntoElement, StatefulInteractiveElement, div, prelude::*, px,
 };
-use relay_core::{PreviewTargetProjection, TaskProjection};
+use relay_core::{PreviewTargetProjection, TaskId, TaskProjection};
 
 use crate::{app_shell::AppShell, theme::RelayTheme, workbench::WorkbenchCommand};
 
@@ -13,7 +13,7 @@ pub fn preview_content(
     let mut targets = div().flex().flex_col().gap_2();
     if let Some(task) = task {
         for target in &task.preview_targets {
-            targets = targets.child(preview_target(theme, target));
+            targets = targets.child(preview_target(theme, task.id, target, cx));
         }
     }
 
@@ -89,7 +89,13 @@ fn active_preview_summary(theme: RelayTheme, task: Option<&TaskProjection>) -> g
         )
 }
 
-fn preview_target(theme: RelayTheme, target: &PreviewTargetProjection) -> gpui::Div {
+fn preview_target(
+    theme: RelayTheme,
+    task_id: TaskId,
+    target: &PreviewTargetProjection,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
+    let target_id = target.id;
     div()
         .rounded_sm()
         .border_1()
@@ -98,21 +104,40 @@ fn preview_target(theme: RelayTheme, target: &PreviewTargetProjection) -> gpui::
         .px_3()
         .py_2()
         .flex()
-        .flex_col()
-        .gap_1()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.panel).border_color(theme.selection_line))
+        .id((gpui::ElementId::from(target_id.as_uuid()), "preview-target"))
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(
+                WorkbenchCommand::OpenPreviewTarget { task_id, target_id },
+                cx,
+            );
+        }))
         .child(
             div()
-                .text_sm()
-                .text_color(theme.text)
-                .child(target.label.clone()),
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.text)
+                        .child(target.label.clone()),
+                )
+                .child(
+                    div()
+                        .font_family("Consolas")
+                        .text_xs()
+                        .text_color(theme.muted)
+                        .truncate()
+                        .child(target.uri.clone()),
+                ),
         )
-        .child(
-            div()
-                .font_family("Consolas")
-                .text_xs()
-                .text_color(theme.muted)
-                .child(target.uri.clone()),
-        )
+        .child(open_preview_badge(theme))
 }
 
 fn empty_preview_state(
@@ -233,6 +258,23 @@ fn attach_worktree_button(
             this.dispatch(WorkbenchCommand::AttachWorktreePreview(task_id), cx);
         }))
         .child("Attach")
+}
+
+fn open_preview_badge(theme: RelayTheme) -> gpui::Div {
+    div()
+        .flex_shrink_0()
+        .h(px(24.0))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.selection_line)
+        .bg(theme.panel)
+        .flex()
+        .items_center()
+        .text_xs()
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(theme.text)
+        .child("Open")
 }
 
 fn preview_state_badge(theme: RelayTheme, label: &'static str, color: gpui::Hsla) -> gpui::Div {

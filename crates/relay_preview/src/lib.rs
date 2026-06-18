@@ -12,6 +12,12 @@ pub enum PreviewError {
     EmptyUri,
     #[error("unsupported preview uri: {0}")]
     UnsupportedUri(String),
+    #[error("failed to open preview target {uri}")]
+    OpenFailed {
+        uri: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,8 +41,15 @@ pub trait PreviewProvider {
     ) -> PreviewResult<TaskCommand>;
 }
 
+pub trait PreviewOpener {
+    fn open_target(&mut self, uri: &str) -> PreviewResult<()>;
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LocalPreviewProvider;
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemPreviewOpener;
 
 impl PreviewProvider for LocalPreviewProvider {
     fn attach_target(
@@ -62,6 +75,16 @@ impl PreviewProvider for LocalPreviewProvider {
                 uri: uri.to_string(),
             },
             now,
+        })
+    }
+}
+
+impl PreviewOpener for SystemPreviewOpener {
+    fn open_target(&mut self, uri: &str) -> PreviewResult<()> {
+        classify_target(uri)?;
+        open::that(uri).map_err(|source| PreviewError::OpenFailed {
+            uri: uri.to_string(),
+            source,
         })
     }
 }
@@ -268,6 +291,16 @@ mod tests {
                 now(),
             )
             .expect_err("remote web URLs are deferred");
+
+        assert!(matches!(error, PreviewError::UnsupportedUri(_)));
+    }
+
+    #[test]
+    fn system_preview_opener_should_reject_remote_urls() {
+        let mut opener = SystemPreviewOpener;
+        let error = opener
+            .open_target("https://example.com")
+            .expect_err("remote web URLs are not preview targets");
 
         assert!(matches!(error, PreviewError::UnsupportedUri(_)));
     }

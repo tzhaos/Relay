@@ -5,7 +5,7 @@ use gpui::{
     Task as GpuiTask, TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowDecorations,
     WindowOptions, div, prelude::*, px, size,
 };
-use relay_core::{TaskId, TaskProjection, TerminalSessionId};
+use relay_core::{PreviewTargetId, TaskId, TaskProjection, TerminalSessionId};
 
 use crate::{
     diff_pane::context_pane,
@@ -37,6 +37,11 @@ pub trait TaskDataSource {
         body: &str,
     ) -> anyhow::Result<Vec<TaskProjection>>;
     fn attach_worktree_preview(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
+    fn open_preview_target(
+        &mut self,
+        task_id: TaskId,
+        target_id: PreviewTargetId,
+    ) -> anyhow::Result<()>;
     fn write_terminal(&mut self, session_id: TerminalSessionId, bytes: &[u8])
     -> anyhow::Result<()>;
     fn poll_runtime(&mut self) -> anyhow::Result<bool>;
@@ -242,6 +247,10 @@ impl AppShell {
         }
         if let WorkbenchCommand::AttachWorktreePreview(task_id) = command {
             self.attach_worktree_preview(task_id, cx);
+            return;
+        }
+        if let WorkbenchCommand::OpenPreviewTarget { task_id, target_id } = command {
+            self.open_preview_target(task_id, target_id, cx);
             return;
         }
         if let WorkbenchCommand::WriteTerminal(session_id, bytes) = command {
@@ -462,6 +471,26 @@ impl AppShell {
         match self.task_data_source.attach_worktree_preview(task_id) {
             Ok(tasks) => {
                 self.replace_tasks_preserving_active(tasks);
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn open_preview_target(
+        &mut self,
+        task_id: TaskId,
+        target_id: PreviewTargetId,
+        cx: &mut Context<Self>,
+    ) {
+        match self
+            .task_data_source
+            .open_preview_target(task_id, target_id)
+        {
+            Ok(()) => {
                 self.last_error = None;
             }
             Err(error) => {

@@ -11,14 +11,16 @@ use relay_agent::{
 };
 use relay_core::{
     AgentRuntimeStatus, AgentSessionId, CreateTask, DiffFileProjection, DiffHunkProjection,
-    DiffLineProjection, DiffLineProjectionKind, DiffStatsProjection, ProjectId, ProviderFailure,
-    SelectedRange, Task, TaskCommand, TaskDiffProjection, TaskId, TaskProjection, TaskSource,
-    TaskStatus, TerminalSessionId,
+    DiffLineProjection, DiffLineProjectionKind, DiffStatsProjection, PreviewTargetId, ProjectId,
+    ProviderFailure, SelectedRange, Task, TaskCommand, TaskDiffProjection, TaskId, TaskProjection,
+    TaskSource, TaskStatus, TerminalSessionId,
 };
 use relay_diff::{DiffEngine, DiffLineKind, DiffSnapshot, ReviewService};
 use relay_infra::paths::RelayPaths;
 use relay_persistence::RelayDatabase;
-use relay_preview::{LocalPreviewProvider, PreviewProvider, PreviewRequest};
+use relay_preview::{
+    LocalPreviewProvider, PreviewOpener, PreviewProvider, PreviewRequest, SystemPreviewOpener,
+};
 use relay_project::{CreateTaskWorktree, Project, ProjectService};
 use relay_terminal::{PtyProvider, TerminalError, TerminalEvent, TerminalRuntime, TerminalSpawn};
 use relay_ui::{
@@ -42,6 +44,7 @@ pub struct RelayRuntime {
     terminal_runtime: TerminalRuntime,
     agent_registry: AgentRegistry,
     preview_provider: LocalPreviewProvider,
+    preview_opener: Box<dyn PreviewOpener>,
     terminal_task_ids: HashMap<TerminalSessionId, TaskId>,
     project: Project,
     worktrees_dir: PathBuf,
@@ -73,6 +76,7 @@ impl RelayRuntime {
             terminal_runtime: TerminalRuntime::new(),
             agent_registry,
             preview_provider: LocalPreviewProvider,
+            preview_opener: Box::new(SystemPreviewOpener),
             terminal_task_ids,
             project,
             worktrees_dir,
@@ -312,6 +316,26 @@ impl RelayRuntime {
             repository.save_snapshot(&projection)?;
         }
         self.list_task_projections()
+    }
+
+    fn open_preview_target_for_task(
+        &mut self,
+        task_id: TaskId,
+        target_id: PreviewTargetId,
+    ) -> Result<()> {
+        let task = self
+            .database
+            .task_repository()
+            .load_task(task_id)?
+            .context("task not found")?;
+        let target = task
+            .preview_targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .context("preview target not found")?;
+
+        self.preview_opener.open_target(&target.uri)?;
+        Ok(())
     }
 
     fn refresh_changed_files(&mut self) -> Result<()> {
@@ -604,6 +628,10 @@ impl TaskDataSource for RelayRuntime {
         self.attach_worktree_preview_for_task(task_id)
     }
 
+    fn open_preview_target(&mut self, task_id: TaskId, target_id: PreviewTargetId) -> Result<()> {
+        self.open_preview_target_for_task(task_id, target_id)
+    }
+
     fn write_terminal(&mut self, session_id: TerminalSessionId, bytes: &[u8]) -> Result<()> {
         self.write_terminal_input(session_id, bytes)
     }
@@ -833,9 +861,11 @@ fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::RefCell,
         fs,
         path::{Path, PathBuf},
         process::Command,
+        rc::Rc,
         thread,
         time::{Duration, Instant},
     };
@@ -1382,6 +1412,50 @@ mod tests {
         assert_eq!(task.preview_target_count, 1);
     }
 
+    #[test]
+    fn open_preview_target_should_delegate_attached_uri_to_opener() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        runtime.preview_opener = Box::new(RecordingPreviewOpener {
+            opened: Rc::clone(&opened),
+        });
+        let tasks = runtime
+            .create_task_with_worktree("Open preview")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+        let tasks = runtime
+            .attach_worktree_preview_for_task(task_id)
+            .expect("preview should attach");
+        let target = tasks[0]
+            .preview_targets
+            .first()
+            .expect("preview target should exist");
+
+        runtime
+            .open_preview_target_for_task(task_id, target.id)
+            .expect("preview should open");
+
+        assert_eq!(opened.borrow().as_slice(), [target.uri.as_str()]);
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_shell_quote_should_preserve_path_backslashes() {
@@ -1577,6 +1651,17 @@ mod tests {
 
         fn format_followup(&self, message: AgentMessage) -> AgentResult<AgentInput> {
             Ok(AgentInput::stdin_line(message.body))
+        }
+    }
+
+    struct RecordingPreviewOpener {
+        opened: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl PreviewOpener for RecordingPreviewOpener {
+        fn open_target(&mut self, uri: &str) -> relay_preview::PreviewResult<()> {
+            self.opened.borrow_mut().push(uri.to_string());
+            Ok(())
         }
     }
 

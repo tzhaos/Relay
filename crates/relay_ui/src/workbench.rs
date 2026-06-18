@@ -1,4 +1,6 @@
-use relay_core::{LineIdentity, TaskId, TaskProjection, TaskStatus, TerminalSessionId};
+use relay_core::{
+    LineIdentity, PreviewTargetId, TaskId, TaskProjection, TaskStatus, TerminalSessionId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneRoute {
@@ -41,6 +43,10 @@ pub enum WorkbenchCommand {
     LaunchAgent(TaskId),
     DeliverReview(TaskId),
     AttachWorktreePreview(TaskId),
+    OpenPreviewTarget {
+        task_id: TaskId,
+        target_id: PreviewTargetId,
+    },
     WriteTerminal(TerminalSessionId, Vec<u8>),
 }
 
@@ -309,6 +315,7 @@ impl WorkspaceViewModel {
             WorkbenchCommand::LaunchAgent(_) => {}
             WorkbenchCommand::DeliverReview(_) => {}
             WorkbenchCommand::AttachWorktreePreview(_) => {}
+            WorkbenchCommand::OpenPreviewTarget { .. } => {}
             WorkbenchCommand::WriteTerminal(_, _) => {}
         }
     }
