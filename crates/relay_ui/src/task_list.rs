@@ -172,11 +172,17 @@ fn task_section(
                         .items_center()
                         .gap_2()
                         .child(count_badge(theme, view_model.tasks.len().to_string()))
-                        .child(focus_task_title_button(theme, task_title_focus, cx)),
+                        .child(focus_task_title_button(
+                            theme,
+                            task_title_focus,
+                            view_model.project_open,
+                            cx,
+                        )),
                 ),
         )
         .child(task_title_composer(
             theme,
+            view_model.project_open,
             view_model.task_title_draft.as_str(),
             task_title_focus,
             cx,
@@ -215,8 +221,10 @@ fn task_rows(
 
     if has_rows {
         rows
-    } else {
+    } else if view_model.project_open {
         rows.child(empty_state(theme, "No tasks", "Task list is empty."))
+    } else {
+        rows.child(empty_state(theme, "No project", "Task list is detached."))
     }
 }
 
@@ -354,10 +362,11 @@ fn count_badge(theme: RelayTheme, value: String) -> gpui::Div {
 fn focus_task_title_button(
     theme: RelayTheme,
     task_title_focus: &FocusHandle,
+    project_open: bool,
     cx: &mut Context<AppShell>,
-) -> impl IntoElement {
+) -> gpui::AnyElement {
     let focus_handle = task_title_focus.clone();
-    div()
+    let button = div()
         .h(px(24.0))
         .px_2()
         .rounded_sm()
@@ -367,28 +376,82 @@ fn focus_task_title_button(
         .flex()
         .items_center()
         .text_xs()
-        .text_color(theme.text)
-        .cursor_pointer()
-        .hover(|style| style.bg(theme.selection))
+        .text_color(if project_open {
+            theme.text
+        } else {
+            theme.muted
+        })
         .id("focus-task-title")
-        .on_click(cx.listener(move |_, _: &gpui::ClickEvent, window, _| {
-            window.focus(&focus_handle);
-        }))
-        .child("New")
+        .child("New");
+
+    if project_open {
+        button
+            .cursor_pointer()
+            .hover(|style| style.bg(theme.selection))
+            .on_click(cx.listener(move |_, _: &gpui::ClickEvent, window, _| {
+                window.focus(&focus_handle);
+            }))
+            .into_any_element()
+    } else {
+        button.into_any_element()
+    }
 }
 
 fn task_title_composer(
     theme: RelayTheme,
+    project_open: bool,
     draft: &str,
     task_title_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
 ) -> gpui::Div {
     let focus_handle = task_title_focus.clone();
-    let can_create = !draft.trim().is_empty();
-    let label = if draft.is_empty() {
+    let can_create = project_open && !draft.trim().is_empty();
+    let label = if !project_open {
+        "No project open".to_string()
+    } else if draft.is_empty() {
         "Task title".to_string()
     } else {
         draft.to_string()
+    };
+    let input = div()
+        .h(px(30.0))
+        .min_w_0()
+        .flex_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(if can_create {
+            theme.selection_line
+        } else {
+            theme.line
+        })
+        .bg(theme.chrome)
+        .px_2()
+        .flex()
+        .items_center()
+        .text_sm()
+        .text_color(if !project_open || draft.is_empty() {
+            theme.muted
+        } else {
+            theme.text
+        })
+        .id("task-title-input");
+    let input = if project_open {
+        input
+            .track_focus(task_title_focus)
+            .tab_index(0)
+            .cursor(CursorStyle::IBeam)
+            .key_context("TaskTitleDraft")
+            .focus(|style| style.border_color(theme.selection_line))
+            .on_key_down(cx.listener(|this, event, _, cx| {
+                if this.handle_task_title_key(event, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .on_click(cx.listener(move |_, _: &gpui::ClickEvent, window, _| {
+                window.focus(&focus_handle);
+            }))
+    } else {
+        input
     };
 
     div()
@@ -405,48 +468,12 @@ fn task_title_composer(
         .flex()
         .items_center()
         .gap_2()
-        .child(
-            div()
-                .h(px(30.0))
-                .min_w_0()
-                .flex_1()
-                .rounded_sm()
-                .border_1()
-                .border_color(if can_create {
-                    theme.selection_line
-                } else {
-                    theme.line
-                })
-                .bg(theme.chrome)
-                .px_2()
-                .flex()
-                .items_center()
-                .text_sm()
-                .text_color(if draft.is_empty() {
-                    theme.muted
-                } else {
-                    theme.text
-                })
-                .track_focus(task_title_focus)
-                .tab_index(0)
-                .cursor(CursorStyle::IBeam)
-                .key_context("TaskTitleDraft")
-                .focus(|style| style.border_color(theme.selection_line))
-                .on_key_down(cx.listener(|this, event, _, cx| {
-                    if this.handle_task_title_key(event, cx) {
-                        cx.stop_propagation();
-                    }
-                }))
-                .id("task-title-input")
-                .on_click(cx.listener(move |_, _: &gpui::ClickEvent, window, _| {
-                    window.focus(&focus_handle);
-                }))
-                .child(div().min_w_0().truncate().child(label)),
-        )
+        .child(input.child(div().min_w_0().truncate().child(label)))
         .child(if can_create {
             create_task_button(theme, cx).into_any_element()
         } else {
-            task_title_state_badge(theme).into_any_element()
+            task_title_state_badge(theme, if project_open { "TITLE" } else { "PROJECT" })
+                .into_any_element()
         })
 }
 
@@ -472,7 +499,7 @@ fn create_task_button(theme: RelayTheme, cx: &mut Context<AppShell>) -> impl Int
         .child("Create")
 }
 
-fn task_title_state_badge(theme: RelayTheme) -> gpui::Div {
+fn task_title_state_badge(theme: RelayTheme, label: &'static str) -> gpui::Div {
     div()
         .h(px(28.0))
         .px_2()
@@ -485,7 +512,7 @@ fn task_title_state_badge(theme: RelayTheme) -> gpui::Div {
         .text_xs()
         .font_weight(gpui::FontWeight::BOLD)
         .text_color(theme.muted)
-        .child("TITLE")
+        .child(label)
 }
 
 fn metric_pill(theme: RelayTheme, label: &'static str, value: String) -> gpui::Div {

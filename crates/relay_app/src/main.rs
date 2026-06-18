@@ -15,8 +15,7 @@ fn main() -> Result<()> {
     let _logging_guard = logging::init(&paths)?;
     let database = RelayDatabase::open(paths.database_path())?;
     let mut runtime = RelayRuntime::open(database, &paths)?;
-    let project_label = runtime.project_label().to_string();
-    let tasks = runtime.load_tasks()?;
+    let workspace = runtime.workspace_data()?;
     let mut task_data_source = Some(Box::new(runtime) as Box<dyn TaskDataSource>);
 
     tracing::info!("starting Relay");
@@ -24,7 +23,7 @@ fn main() -> Result<()> {
         let task_data_source = task_data_source
             .take()
             .expect("Relay window should open once");
-        if let Err(error) = AppShell::open(cx, project_label, tasks, task_data_source) {
+        if let Err(error) = AppShell::open(cx, workspace, task_data_source) {
             tracing::error!(?error, "failed to open Relay window");
         }
     });

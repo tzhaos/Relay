@@ -120,6 +120,7 @@ pub struct WorkspaceStatusSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceViewModel {
     pub project_label: String,
+    pub project_open: bool,
     pub tasks: Vec<TaskProjection>,
     pub active_task_id: Option<TaskId>,
     pub pane_route: PaneRoute,
@@ -136,9 +137,22 @@ impl WorkspaceViewModel {
     }
 
     pub fn for_project(project_label: String, tasks: Vec<TaskProjection>) -> Self {
+        Self::from_workspace(project_label, true, tasks)
+    }
+
+    pub fn detached() -> Self {
+        Self::from_workspace("No project".to_string(), false, Vec::new())
+    }
+
+    pub fn from_workspace(
+        project_label: String,
+        project_open: bool,
+        tasks: Vec<TaskProjection>,
+    ) -> Self {
         let active_task_id = preferred_active_task_id(&tasks, None);
         Self {
             project_label,
+            project_open,
             active_task_id,
             tasks,
             pane_route: PaneRoute::Terminal,
@@ -174,6 +188,10 @@ impl WorkspaceViewModel {
     }
 
     pub fn active_worktree_label(&self) -> String {
+        if !self.project_open {
+            return "no project".to_string();
+        }
+
         self.active_task()
             .and_then(|task| task.worktree_path.as_deref())
             .map(worktree_name)
@@ -181,6 +199,10 @@ impl WorkspaceViewModel {
     }
 
     pub fn active_worktree_path_label(&self) -> String {
+        if !self.project_open {
+            return "No project root".to_string();
+        }
+
         self.active_task()
             .and_then(|task| task.worktree_path.as_deref())
             .map(str::to_string)
@@ -188,6 +210,10 @@ impl WorkspaceViewModel {
     }
 
     pub fn active_branch_label(&self) -> String {
+        if !self.project_open {
+            return "no project".to_string();
+        }
+
         self.active_task()
             .and_then(|task| task.worktree_branch.as_deref())
             .map(str::to_string)
@@ -241,7 +267,9 @@ impl WorkspaceViewModel {
             }
         }
 
-        let runtime_label = if attached_terminal_count == 0 {
+        let runtime_label = if !self.project_open {
+            "no project".to_string()
+        } else if attached_terminal_count == 0 {
             "no terminal".to_string()
         } else {
             count_label(attached_terminal_count, "terminal", "terminals")
@@ -268,7 +296,7 @@ impl WorkspaceViewModel {
     }
 
     pub fn can_create_task_from_draft(&self) -> bool {
-        !self.task_title_draft.trim().is_empty()
+        self.project_open && !self.task_title_draft.trim().is_empty()
     }
 
     pub fn apply_command(&mut self, command: WorkbenchCommand) {
@@ -577,6 +605,19 @@ mod tests {
         ]);
 
         assert_eq!(view_model.active_task_id, Some(second_id));
+    }
+
+    #[test]
+    fn detached_workspace_should_disable_task_creation_state() {
+        let mut view_model = WorkspaceViewModel::detached();
+
+        view_model.apply_command(WorkbenchCommand::AppendTaskTitleDraft(
+            "Implement detached task".to_string(),
+        ));
+
+        assert!(!view_model.project_open);
+        assert!(!view_model.can_create_task_from_draft());
+        assert_eq!(view_model.status_summary().runtime_label, "no project");
     }
 
     #[test]

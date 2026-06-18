@@ -49,9 +49,8 @@ pub struct RelayRuntime {
     preview_provider: LocalPreviewProvider,
     preview_opener: Box<dyn PreviewOpener>,
     terminal_task_ids: HashMap<TerminalSessionId, TaskId>,
-    project: Project,
+    project: Option<Project>,
     worktrees_root: PathBuf,
-    worktrees_dir: PathBuf,
 }
 
 impl RelayRuntime {
@@ -60,15 +59,27 @@ impl RelayRuntime {
     }
 
     fn open_with_agent_registry(
-        mut database: RelayDatabase,
+        database: RelayDatabase,
         paths: &RelayPaths,
         agent_registry: AgentRegistry,
     ) -> Result<Self> {
+        let current_dir = std::env::current_dir().context("failed to read current directory")?;
+        Self::open_with_agent_registry_from_dir(database, paths, agent_registry, &current_dir)
+    }
+
+    fn open_with_agent_registry_from_dir(
+        mut database: RelayDatabase,
+        paths: &RelayPaths,
+        agent_registry: AgentRegistry,
+        current_dir: &Path,
+    ) -> Result<Self> {
         let project_service = ProjectService::default();
-        let project = load_or_open_project(&mut database, &project_service)?;
+        let project = load_or_open_project(&mut database, &project_service, current_dir)?;
         let worktrees_root = paths.data_dir.join("worktrees");
-        let worktrees_dir = worktrees_root.join(project.id.to_string());
-        let terminal_task_ids = load_terminal_task_ids(&mut database, project.id)?;
+        let terminal_task_ids = match project.as_ref() {
+            Some(project) => load_terminal_task_ids(&mut database, project.id)?,
+            None => HashMap::new(),
+        };
 
         let mut runtime = Self {
             database,
@@ -81,17 +92,27 @@ impl RelayRuntime {
             terminal_task_ids,
             project,
             worktrees_root,
-            worktrees_dir,
         };
         runtime.restore_terminal_sessions()?;
         Ok(runtime)
     }
 
-    pub fn project_label(&self) -> &str {
-        &self.project.display_name
+    pub fn workspace_data(&mut self) -> Result<WorkspaceData> {
+        let Some(project) = self.project.as_ref() else {
+            return Ok(WorkspaceData::detached());
+        };
+        let project_label = project.display_name.clone();
+        Ok(WorkspaceData::for_project(
+            project_label,
+            self.load_tasks()?,
+        ))
     }
 
     pub fn load_tasks(&mut self) -> Result<Vec<TaskProjection>> {
+        if self.project.is_none() {
+            return Ok(Vec::new());
+        }
+
         self.refresh_changed_files()?;
         self.list_task_projections()
     }
@@ -100,31 +121,28 @@ impl RelayRuntime {
         let project = open_project_at(&mut self.database, &self.project_service, path)?;
         self.terminal_runtime = TerminalRuntime::new();
         self.terminal_task_ids = load_terminal_task_ids(&mut self.database, project.id)?;
-        self.worktrees_dir = self.worktrees_root.join(project.id.to_string());
-        self.project = project;
+        self.project = Some(project);
         self.restore_terminal_sessions()?;
-
-        Ok(WorkspaceData {
-            project_label: self.project_label().to_string(),
-            tasks: self.load_tasks()?,
-        })
+        self.workspace_data()
     }
 
     fn create_task_with_worktree(&mut self, title: &str) -> Result<Vec<TaskProjection>> {
+        let project = self.require_project()?;
+        let worktrees_dir = self.worktrees_root.join(project.id.to_string());
         let now = OffsetDateTime::now_utc();
         let (mut task, mut events) = Task::create(CreateTask {
             id: None,
-            project_id: self.project.id,
+            project_id: project.id,
             title: title.to_string(),
             source: TaskSource::Manual,
             now,
         })?;
 
         let snapshot = self.project_service.create_task_worktree(
-            &self.project,
+            &project,
             &CreateTaskWorktree {
                 task_title: worktree_title(&task),
-                worktrees_dir: self.worktrees_dir.clone(),
+                worktrees_dir,
                 branch_prefix: TASK_BRANCH_PREFIX.to_string(),
             },
         )?;
@@ -383,10 +401,13 @@ impl RelayRuntime {
     }
 
     fn refresh_changed_files(&mut self) -> Result<()> {
+        let Some(project_id) = self.active_project_id() else {
+            return Ok(());
+        };
         let task_ids = self
             .database
             .task_repository()
-            .list_tasks_for_project(self.project.id)?
+            .list_tasks_for_project(project_id)?
             .into_iter()
             .map(|task| task.id)
             .collect::<Vec<_>>();
@@ -429,10 +450,13 @@ impl RelayRuntime {
     }
 
     fn restore_terminal_sessions(&mut self) -> Result<()> {
+        let Some(project_id) = self.active_project_id() else {
+            return Ok(());
+        };
         let task_ids = self
             .database
             .task_repository()
-            .list_tasks_for_project(self.project.id)?
+            .list_tasks_for_project(project_id)?
             .into_iter()
             .map(|task| task.id)
             .collect::<Vec<_>>();
@@ -472,10 +496,13 @@ impl RelayRuntime {
     }
 
     fn list_task_projections(&mut self) -> Result<Vec<TaskProjection>> {
+        let Some(project_id) = self.active_project_id() else {
+            return Ok(Vec::new());
+        };
         let mut tasks = self
             .database
             .task_repository()
-            .list_tasks_for_project(self.project.id)?;
+            .list_tasks_for_project(project_id)?;
         self.enrich_diff_projections(&mut tasks)?;
         Ok(tasks)
     }
@@ -531,11 +558,14 @@ impl RelayRuntime {
     }
 
     fn mark_stale_agent_statuses(&mut self) -> Result<bool> {
+        let Some(project_id) = self.active_project_id() else {
+            return Ok(false);
+        };
         let now = OffsetDateTime::now_utc();
         let task_ids = self
             .database
             .task_repository()
-            .list_tasks_for_project(self.project.id)?
+            .list_tasks_for_project(project_id)?
             .into_iter()
             .filter(|task| {
                 matches!(
@@ -695,6 +725,16 @@ impl RelayRuntime {
             labels.join(", ")
         }
     }
+
+    fn active_project_id(&self) -> Option<ProjectId> {
+        self.project.as_ref().map(|project| project.id)
+    }
+
+    fn require_project(&self) -> Result<Project> {
+        self.project
+            .clone()
+            .context("open a project before using project task features")
+    }
 }
 
 impl TaskDataSource for RelayRuntime {
@@ -757,24 +797,38 @@ impl TaskDataSource for RelayRuntime {
 fn load_or_open_project(
     database: &mut RelayDatabase,
     project_service: &ProjectService,
-) -> Result<Project> {
+    current_dir: &Path,
+) -> Result<Option<Project>> {
     let stored_root = database
         .settings_repository()
         .get_json::<PathBuf>(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY)?;
-    let current_dir = std::env::current_dir().context("failed to read current directory")?;
-    let candidate = stored_root.as_deref().unwrap_or(&current_dir);
+    let candidate = stored_root.as_deref().unwrap_or(current_dir);
 
     match open_project_at(database, project_service, candidate) {
-        Ok(project) => Ok(project),
-        Err(error) if stored_root.is_some() => {
-            open_project_at(database, project_service, &current_dir).with_context(|| {
-                format!(
-                    "stored project root {} could not be opened: {error}",
-                    candidate.display()
-                )
-            })
+        Ok(project) => Ok(Some(project)),
+        Err(stored_error) if stored_root.is_some() => {
+            match open_project_at(database, project_service, current_dir) {
+                Ok(project) => Ok(Some(project)),
+                Err(current_error) => {
+                    tracing::warn!(
+                        stored_root = %candidate.display(),
+                        current_dir = %current_dir.display(),
+                        ?stored_error,
+                        ?current_error,
+                        "starting Relay without an open project"
+                    );
+                    Ok(None)
+                }
+            }
         }
-        Err(error) => Err(error).context("failed to open current directory as git repo"),
+        Err(error) => {
+            tracing::warn!(
+                current_dir = %candidate.display(),
+                ?error,
+                "starting Relay without an open project"
+            );
+            Ok(None)
+        }
     }
 }
 
@@ -1030,6 +1084,95 @@ mod tests {
     use super::*;
 
     #[test]
+    fn runtime_open_should_start_detached_when_no_git_project_is_available() {
+        let temp = tempdir().expect("tempdir should exist");
+        let current_dir = temp.path().join("not-a-repo");
+        fs::create_dir_all(&current_dir).expect("current dir should exist");
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        let mut runtime = RelayRuntime::open_with_agent_registry_from_dir(
+            database,
+            &paths,
+            AgentRegistry::built_in(),
+            &current_dir,
+        )
+        .expect("runtime should open detached");
+
+        let workspace = runtime
+            .workspace_data()
+            .expect("workspace data should load");
+
+        assert!(!workspace.project_open);
+        assert_eq!(workspace.project_label, "No project");
+        assert!(workspace.tasks.is_empty());
+    }
+
+    #[test]
+    fn create_task_should_fail_when_runtime_is_detached() {
+        let temp = tempdir().expect("tempdir should exist");
+        let current_dir = temp.path().join("not-a-repo");
+        fs::create_dir_all(&current_dir).expect("current dir should exist");
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        let mut runtime = RelayRuntime::open_with_agent_registry_from_dir(
+            database,
+            &paths,
+            AgentRegistry::built_in(),
+            &current_dir,
+        )
+        .expect("runtime should open detached");
+
+        let error = runtime
+            .create_task_with_worktree("Detached task")
+            .expect_err("detached runtime should require a project");
+
+        assert!(
+            error.to_string().contains("open a project"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn open_project_root_should_attach_project_from_detached_runtime() {
+        let temp = tempdir().expect("tempdir should exist");
+        let current_dir = temp.path().join("not-a-repo");
+        fs::create_dir_all(&current_dir).expect("current dir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        let mut runtime = RelayRuntime::open_with_agent_registry_from_dir(
+            database,
+            &paths,
+            AgentRegistry::built_in(),
+            &current_dir,
+        )
+        .expect("runtime should open detached");
+
+        let workspace = runtime
+            .open_project_root(&repo)
+            .expect("project should open");
+
+        assert!(workspace.project_open);
+        assert_eq!(workspace.project_label, "repo");
+        assert!(workspace.tasks.is_empty());
+    }
+
+    #[test]
     fn runtime_should_create_task_with_real_worktree() {
         let temp = tempdir().expect("tempdir should exist");
         let repo = init_git_repo(temp.path().join("repo"));
@@ -1087,6 +1230,7 @@ mod tests {
             .open_project_root(&repo_two)
             .expect("second project should open");
 
+        assert!(repo_two_workspace.project_open);
         assert_eq!(repo_two_workspace.project_label, "repo-two");
         assert!(repo_two_workspace.tasks.is_empty());
 
@@ -1094,6 +1238,7 @@ mod tests {
             .open_project_root(&repo_one)
             .expect("first project should reopen");
 
+        assert!(repo_one_workspace.project_open);
         assert_eq!(repo_one_workspace.project_label, "repo-one");
         assert_eq!(repo_one_workspace.tasks[0].id, repo_one_task_id);
     }

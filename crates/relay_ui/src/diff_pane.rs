@@ -37,6 +37,7 @@ pub fn context_pane(
         .child(header(
             theme,
             view_model.context_tab,
+            view_model.project_open,
             filter,
             filter_focus,
             cx,
@@ -65,6 +66,7 @@ pub fn context_pane(
 fn header(
     theme: RelayTheme,
     active_tab: ContextTab,
+    project_open: bool,
     filter: &str,
     filter_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
@@ -95,7 +97,7 @@ fn header(
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(refresh_button(theme, cx))
+                        .child(refresh_button(theme, project_open, cx))
                         .child(
                             div()
                                 .rounded_sm()
@@ -123,8 +125,12 @@ fn header(
         )
 }
 
-fn refresh_button(theme: RelayTheme, cx: &mut Context<AppShell>) -> impl IntoElement {
-    div()
+fn refresh_button(
+    theme: RelayTheme,
+    project_open: bool,
+    cx: &mut Context<AppShell>,
+) -> gpui::AnyElement {
+    let button = div()
         .h(px(24.0))
         .px_2()
         .rounded_sm()
@@ -135,14 +141,25 @@ fn refresh_button(theme: RelayTheme, cx: &mut Context<AppShell>) -> impl IntoEle
         .items_center()
         .text_xs()
         .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(theme.text)
-        .cursor_pointer()
-        .hover(|style| style.bg(theme.selection))
+        .text_color(if project_open {
+            theme.text
+        } else {
+            theme.muted
+        })
         .id("refresh-changed-files")
-        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-            this.dispatch(WorkbenchCommand::RefreshChangedFiles, cx);
-        }))
-        .child("Refresh")
+        .child("Refresh");
+
+    if project_open {
+        button
+            .cursor_pointer()
+            .hover(|style| style.bg(theme.selection))
+            .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                this.dispatch(WorkbenchCommand::RefreshChangedFiles, cx);
+            }))
+            .into_any_element()
+    } else {
+        button.into_any_element()
+    }
 }
 
 fn search_field(

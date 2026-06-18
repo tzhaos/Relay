@@ -60,14 +60,32 @@ pub trait TaskDataSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceData {
     pub project_label: String,
+    pub project_open: bool,
     pub tasks: Vec<TaskProjection>,
+}
+
+impl WorkspaceData {
+    pub fn detached() -> Self {
+        Self {
+            project_label: "No project".to_string(),
+            project_open: false,
+            tasks: Vec::new(),
+        }
+    }
+
+    pub fn for_project(project_label: String, tasks: Vec<TaskProjection>) -> Self {
+        Self {
+            project_label,
+            project_open: true,
+            tasks,
+        }
+    }
 }
 
 impl AppShell {
     pub fn open(
         cx: &mut App,
-        project_label: String,
-        tasks: Vec<TaskProjection>,
+        workspace: WorkspaceData,
         task_data_source: Box<dyn TaskDataSource>,
     ) -> anyhow::Result<()> {
         let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
@@ -84,15 +102,14 @@ impl AppShell {
                 app_id: Some("relay".to_string()),
                 ..Default::default()
             },
-            |_, cx| cx.new(|cx| Self::new(project_label, tasks, task_data_source, cx)),
+            |_, cx| cx.new(|cx| Self::new(workspace, task_data_source, cx)),
         )?;
         cx.activate(true);
         Ok(())
     }
 
     fn new(
-        project_label: String,
-        tasks: Vec<TaskProjection>,
+        workspace: WorkspaceData,
         task_data_source: Box<dyn TaskDataSource>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -114,7 +131,11 @@ impl AppShell {
 
         Self {
             theme: RelayTheme::orca(),
-            view_model: WorkspaceViewModel::for_project(project_label, tasks),
+            view_model: WorkspaceViewModel::from_workspace(
+                workspace.project_label,
+                workspace.project_open,
+                workspace.tasks,
+            ),
             task_data_source,
             terminal_focus: cx.focus_handle(),
             task_title_focus: cx.focus_handle(),
@@ -328,8 +349,11 @@ impl AppShell {
     fn open_project_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         match self.task_data_source.open_project(&path) {
             Ok(workspace) => {
-                self.view_model =
-                    WorkspaceViewModel::for_project(workspace.project_label, workspace.tasks);
+                self.view_model = WorkspaceViewModel::from_workspace(
+                    workspace.project_label,
+                    workspace.project_open,
+                    workspace.tasks,
+                );
                 self.last_error = None;
             }
             Err(error) => {
@@ -340,6 +364,12 @@ impl AppShell {
     }
 
     fn refresh_changed_files(&mut self, cx: &mut Context<Self>) {
+        if !self.view_model.project_open {
+            self.last_error = None;
+            cx.notify();
+            return;
+        }
+
         match self.task_data_source.refresh_changed_files() {
             Ok(tasks) => {
                 self.replace_tasks_preserving_active(tasks);
@@ -479,6 +509,12 @@ impl AppShell {
     }
 
     fn create_task(&mut self, cx: &mut Context<Self>) {
+        if !self.view_model.project_open {
+            self.last_error = Some("Open a project before creating tasks.".to_string());
+            cx.notify();
+            return;
+        }
+
         let title = self.view_model.task_title_draft.trim().to_string();
         if title.is_empty() {
             cx.notify();
@@ -487,8 +523,8 @@ impl AppShell {
 
         match self.task_data_source.create_task(&title) {
             Ok(tasks) => {
-                let project_label = self.view_model.project_label.clone();
-                self.view_model = WorkspaceViewModel::for_project(project_label, tasks);
+                self.view_model.task_title_draft.clear();
+                self.replace_tasks_preserving_active(tasks);
                 self.last_error = None;
             }
             Err(error) => {
@@ -502,9 +538,8 @@ impl AppShell {
         match self.task_data_source.launch_agent(task_id) {
             Ok(tasks) => {
                 if !tasks.is_empty() {
-                    let project_label = self.view_model.project_label.clone();
                     let active_task_id = self.view_model.active_task_id;
-                    self.view_model = WorkspaceViewModel::for_project(project_label, tasks);
+                    self.replace_tasks_preserving_active(tasks);
                     if let Some(active_task_id) = active_task_id {
                         self.view_model
                             .apply_command(WorkbenchCommand::ActivateTask(active_task_id));
