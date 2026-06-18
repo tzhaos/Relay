@@ -41,7 +41,7 @@ pub fn context_pane(
         .child(match view_model.context_tab {
             ContextTab::Files => files_tab(theme, active_task, filter),
             ContextTab::Diff => diff_tab(theme, active_task, filter),
-            ContextTab::Review => review_tab(theme, active_task, filter),
+            ContextTab::Review => review_tab(theme, active_task, filter, cx),
         })
 }
 
@@ -270,13 +270,21 @@ fn diff_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> g
         })
 }
 
-fn review_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> gpui::Div {
+fn review_tab(
+    theme: RelayTheme,
+    task: Option<&TaskProjection>,
+    filter: &str,
+    cx: &mut Context<AppShell>,
+) -> gpui::Div {
     let review_comments = filtered_review_comments(task, filter);
     let review_count = review_comments.len();
     let pending_count = review_comments
         .iter()
         .filter(|comment| !comment.delivered)
         .count();
+    let deliverable_task = task.filter(|task| {
+        pending_count > 0 && task.agent.is_some() && task.terminal_session_id.is_some()
+    });
     let mut comments = div().flex().flex_col().gap_2();
     for comment in &review_comments {
         comments = comments.child(review_comment(theme, comment));
@@ -304,17 +312,7 @@ fn review_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) ->
                 .items_center()
                 .justify_between()
                 .child(div().text_sm().text_color(theme.text).child("Delivery"))
-                .child(
-                    div()
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(if pending_count == 0 {
-                            theme.muted
-                        } else {
-                            theme.accent
-                        })
-                        .child(if pending_count == 0 { "CLEAN" } else { "DIRTY" }),
-                ),
+                .child(delivery_control(theme, pending_count, deliverable_task, cx)),
         )
         .child(if review_count == 0 {
             empty_state(theme, "No matching review notes", "Review list is empty.")
@@ -474,6 +472,63 @@ fn tree_row(theme: RelayTheme, row: &DiffTreeRow) -> gpui::Div {
             .ml(px((row.depth as f32) * 12.0))
         }
     }
+}
+
+fn delivery_control(
+    theme: RelayTheme,
+    pending_count: usize,
+    task: Option<&TaskProjection>,
+    cx: &mut Context<AppShell>,
+) -> gpui::AnyElement {
+    if let Some(task) = task {
+        return deliver_review_button(theme, task.id, cx).into_any_element();
+    }
+
+    let (label, color) = if pending_count == 0 {
+        ("CLEAN", theme.muted)
+    } else {
+        ("NEEDS AGENT", theme.warning)
+    };
+    div()
+        .h(px(24.0))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.chrome_alt)
+        .flex()
+        .items_center()
+        .text_xs()
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(color)
+        .child(label)
+        .into_any_element()
+}
+
+fn deliver_review_button(
+    theme: RelayTheme,
+    task_id: relay_core::TaskId,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
+    div()
+        .h(px(24.0))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.selection_line)
+        .bg(theme.panel)
+        .flex()
+        .items_center()
+        .text_xs()
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(theme.text)
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.selection))
+        .id((gpui::ElementId::from(task_id.as_uuid()), "deliver-review"))
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::DeliverReview(task_id), cx);
+        }))
+        .child("Deliver")
 }
 
 fn diff_stats_row(

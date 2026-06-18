@@ -27,6 +27,7 @@ pub struct AppShell {
 pub trait TaskDataSource {
     fn create_task(&mut self, title: &str) -> anyhow::Result<Vec<TaskProjection>>;
     fn launch_agent(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
+    fn deliver_review(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn poll_runtime(&mut self) -> anyhow::Result<bool>;
     fn terminal_projection(
         &mut self,
@@ -217,6 +218,10 @@ impl AppShell {
             self.launch_agent(task_id, cx);
             return;
         }
+        if let WorkbenchCommand::DeliverReview(task_id) = command {
+            self.deliver_review(task_id, cx);
+            return;
+        }
 
         self.view_model.apply_command(command);
         cx.notify();
@@ -277,6 +282,27 @@ impl AppShell {
 
     fn launch_agent(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         match self.task_data_source.launch_agent(task_id) {
+            Ok(tasks) => {
+                if !tasks.is_empty() {
+                    let project_label = self.view_model.project_label.clone();
+                    let active_task_id = self.view_model.active_task_id;
+                    self.view_model = WorkspaceViewModel::for_project(project_label, tasks);
+                    if let Some(active_task_id) = active_task_id {
+                        self.view_model
+                            .apply_command(WorkbenchCommand::ActivateTask(active_task_id));
+                    }
+                }
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn deliver_review(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
+        match self.task_data_source.deliver_review(task_id) {
             Ok(tasks) => {
                 if !tasks.is_empty() {
                     let project_label = self.view_model.project_label.clone();

@@ -2,7 +2,8 @@ use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use anyhow::{Context as _, Result, anyhow};
 use relay_agent::{
-    AgentLaunchPlan, AgentRegistry, PromptDelivery, RuntimeEnvironment, initial_prompt_request,
+    AgentLaunchPlan, AgentMessage, AgentRegistry, PromptDelivery, RuntimeEnvironment,
+    initial_prompt_request,
 };
 use relay_core::{
     AgentRuntimeStatus, AgentSessionId, CreateTask, DiffFileProjection, DiffHunkProjection,
@@ -10,7 +11,7 @@ use relay_core::{
     Task, TaskCommand, TaskDiffProjection, TaskId, TaskProjection, TaskSource, TaskStatus,
     TerminalSessionId,
 };
-use relay_diff::{DiffEngine, DiffLineKind, DiffSnapshot};
+use relay_diff::{DiffEngine, DiffLineKind, DiffSnapshot, ReviewService};
 use relay_infra::paths::RelayPaths;
 use relay_persistence::RelayDatabase;
 use relay_project::{CreateTaskWorktree, Project, ProjectService};
@@ -176,6 +177,52 @@ impl RelayRuntime {
         apply_events(&mut task, &status_events)?;
         events.extend(status_events);
 
+        let projection = TaskProjection::from_task(&task);
+        {
+            let mut repository = self.database.task_repository();
+            repository.append_events(&events)?;
+            repository.save_snapshot(&projection)?;
+        }
+        self.list_task_projections()
+    }
+
+    fn deliver_review_for_task(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
+        let mut task = self
+            .database
+            .task_repository()
+            .load_task(task_id)?
+            .context("task not found")?;
+        let terminal_session_id = task
+            .terminal_session_id
+            .context("task has no terminal session")?;
+        let agent_kind = task
+            .agent_kind
+            .clone()
+            .context("task has no active agent")?;
+        if !self.terminal_runtime.has_session(terminal_session_id) {
+            let worktree_path = task
+                .worktree
+                .as_ref()
+                .map(|worktree| PathBuf::from(&worktree.path))
+                .context("task has no worktree")?;
+            self.spawn_terminal_with_id(terminal_session_id, worktree_path)?;
+        }
+
+        let delivery = ReviewService::deliver_comments_to_agent(&task)?;
+        let input = self
+            .agent_registry
+            .resolve(&agent_kind)?
+            .format_followup(AgentMessage {
+                body: delivery.prompt.clone(),
+            })?;
+        self.terminal_runtime
+            .write(terminal_session_id, &input.bytes)?;
+
+        let events = task.handle(ReviewService::mark_delivered(
+            &delivery,
+            OffsetDateTime::now_utc(),
+        ))?;
+        apply_events(&mut task, &events)?;
         let projection = TaskProjection::from_task(&task);
         {
             let mut repository = self.database.task_repository();
@@ -440,6 +487,10 @@ impl TaskDataSource for RelayRuntime {
 
     fn launch_agent(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
         self.launch_agent_for_task(task_id)
+    }
+
+    fn deliver_review(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
+        self.deliver_review_for_task(task_id)
     }
 
     fn poll_runtime(&mut self) -> Result<bool> {
@@ -946,6 +997,83 @@ mod tests {
         );
     }
 
+    #[test]
+    fn deliver_review_should_mark_pending_comments_delivered() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Deliver review")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+        attach_test_agent(&mut runtime, task_id);
+        add_review_comment(&mut runtime, task_id, "Tighten error handling");
+
+        let tasks = runtime
+            .deliver_review_for_task(task_id)
+            .expect("review should deliver");
+        let task = tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .expect("task should remain listed");
+
+        assert_eq!(task.pending_review_comment_count, 0);
+        assert_eq!(task.status, TaskStatus::ReadyToCommit);
+    }
+
+    #[test]
+    fn deliver_review_should_fail_without_agent() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Undeliverable review")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+        add_review_comment(&mut runtime, task_id, "Needs an agent");
+
+        let error = runtime
+            .deliver_review_for_task(task_id)
+            .expect_err("review delivery requires an agent");
+
+        assert!(
+            error.to_string().contains("task has no active agent"),
+            "unexpected error: {error}"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_shell_quote_should_preserve_path_backslashes() {
@@ -983,6 +1111,59 @@ mod tests {
             "git failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn attach_test_agent(runtime: &mut RelayRuntime, task_id: TaskId) {
+        apply_task_command(
+            runtime,
+            task_id,
+            TaskCommand::AttachAgent {
+                id: AgentSessionId::new(),
+                kind: AgentKind::Custom("test-agent".to_string()),
+                started_at: OffsetDateTime::now_utc(),
+            },
+        );
+        apply_task_command(
+            runtime,
+            task_id,
+            TaskCommand::ApplyAgentStatus(AgentStatusUpdate {
+                state: AgentRuntimeStatus::Working,
+                prompt: "Ready for review".to_string(),
+                agent_kind: Some(AgentKind::Custom("test-agent".to_string())),
+                observed_at: OffsetDateTime::now_utc(),
+            }),
+        );
+    }
+
+    fn add_review_comment(runtime: &mut RelayRuntime, task_id: TaskId, body: &str) {
+        let comment = ReviewService::add_comment(
+            task_id,
+            "src/lib.rs",
+            body,
+            None,
+            OffsetDateTime::now_utc(),
+        )
+        .expect("review comment should be valid");
+        apply_task_command(runtime, task_id, TaskCommand::AddReviewComment(comment));
+    }
+
+    fn apply_task_command(runtime: &mut RelayRuntime, task_id: TaskId, command: TaskCommand) {
+        let mut task = runtime
+            .database
+            .task_repository()
+            .load_task(task_id)
+            .expect("task should load")
+            .expect("task should exist");
+        let events = task.handle(command).expect("command should produce events");
+        apply_events(&mut task, &events).expect("events should apply");
+        let projection = TaskProjection::from_task(&task);
+        let mut repository = runtime.database.task_repository();
+        repository
+            .append_events(&events)
+            .expect("events should persist");
+        repository
+            .save_snapshot(&projection)
+            .expect("snapshot should persist");
     }
 
     #[derive(Debug)]

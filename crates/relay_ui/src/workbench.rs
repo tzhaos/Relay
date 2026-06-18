@@ -30,6 +30,7 @@ pub enum WorkbenchCommand {
     ClearContextFilter,
     CreateTask,
     LaunchAgent(TaskId),
+    DeliverReview(TaskId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +212,7 @@ impl WorkspaceViewModel {
             }
             WorkbenchCommand::CreateTask => {}
             WorkbenchCommand::LaunchAgent(_) => {}
+            WorkbenchCommand::DeliverReview(_) => {}
         }
     }
 
