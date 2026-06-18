@@ -13,12 +13,12 @@ pub use ids::{
 };
 pub use task::{
     AgentKind, AgentRuntimeStatus, AgentStatusUpdate, ChangeStatus, ChangedFile, DiffReview,
-    PreviewTarget, ProviderFailure, ReviewComment, Task, TaskSource, TaskStatus, Timestamp,
-    WorktreeSnapshot,
+    DiffSide, LineIdentity, PreviewTarget, ProviderFailure, ReviewComment, SelectedRange, Task,
+    TaskSource, TaskStatus, Timestamp, WorktreeSnapshot,
 };
 pub use task_event::{
     AgentStarted, AgentStatusChanged, ChangedFilesUpdated, PreviewAttached, ProviderFailed,
     ReviewCommentAdded, ReviewDelivered, TaskArchived, TaskCreated, TaskEvent, TerminalStarted,
     WorktreeAttached,
 };
-pub use task_projection::{StatusTone, TaskProjection};
+pub use task_projection::{ReviewCommentProjection, StatusTone, TaskProjection};

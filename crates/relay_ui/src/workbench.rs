@@ -280,6 +280,8 @@ mod tests {
                     id: relay_core::ReviewCommentId::new(),
                     task_id,
                     path: format!("src/{index}.rs"),
+                    line: None,
+                    selected_range: None,
                     body: "Needs follow-up".to_string(),
                     created_at: now,
                 }),

@@ -121,11 +121,37 @@ pub struct WorktreeSnapshot {
     pub base_ref: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiffSide {
+    Old,
+    New,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineIdentity {
+    pub path: String,
+    pub side: DiffSide,
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+    pub hunk_header: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectedRange {
+    pub start: LineIdentity,
+    pub end: LineIdentity,
+    pub selected_text: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewComment {
     pub id: ReviewCommentId,
     pub task_id: TaskId,
     pub path: String,
+    #[serde(default)]
+    pub line: Option<Box<LineIdentity>>,
+    #[serde(default)]
+    pub selected_range: Option<Box<SelectedRange>>,
     pub body: String,
     pub created_at: Timestamp,
 }
@@ -631,6 +657,8 @@ mod tests {
                 id: ReviewCommentId::new(),
                 task_id: crate::TaskId::new(),
                 path: "src/lib.rs".to_string(),
+                line: None,
+                selected_range: None,
                 body: "Wrong task".to_string(),
                 created_at: now(),
             }))

@@ -240,6 +240,8 @@ fn demo_task_projections() -> Vec<TaskProjection> {
             id: ReviewCommentId::new(),
             task_id: reviewing_id,
             path: "crates/relay_diff/src/lib.rs".to_string(),
+            line: None,
+            selected_range: None,
             body: "Keep review comments task-scoped.".to_string(),
             created_at: now,
         }),

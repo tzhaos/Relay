@@ -1,5 +1,6 @@
 use gpui::{IntoElement, div, prelude::*, px};
-use relay_core::{ChangeStatus, ChangedFile, TaskProjection};
+use relay_core::{ChangeStatus, ChangedFile, ReviewCommentProjection, TaskProjection};
+use relay_diff::{DiffTree, DiffTreeRow, DiffTreeRowKind};
 
 use crate::{
     theme::RelayTheme,
@@ -73,8 +74,9 @@ fn tab(
 fn files_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
     let mut rows = div().flex().flex_col().gap_1();
     if let Some(task) = task {
-        for file in &task.changed_files {
-            rows = rows.child(file_row(theme, file));
+        let tree = DiffTree::from_changed_files(&task.changed_files);
+        for row in &tree.rows {
+            rows = rows.child(tree_row(theme, row));
         }
     }
 
@@ -89,7 +91,13 @@ fn files_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
 }
 
 fn diff_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
-    let changed_count = task.map_or(0, |task| task.changed_file_count);
+    let mut hunks = div().flex().flex_col().gap_2();
+    if let Some(task) = task {
+        for file in &task.changed_files {
+            hunks = hunks.child(hunk_card(theme, file));
+        }
+    }
+
     div()
         .flex_1()
         .p_3()
@@ -99,26 +107,31 @@ fn diff_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
         .child(summary(theme, task))
         .child(
             div()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.line)
-                .bg(theme.chrome_alt)
-                .p_3()
+                .flex()
+                .items_center()
+                .justify_between()
                 .text_color(theme.text)
-                .child(format!("{changed_count} changed files ready for hunk view")),
+                .child("Hunks")
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted)
+                        .child("refresh preserves review history"),
+                ),
         )
-        .child(
-            div()
-                .font_family("Consolas")
-                .text_sm()
-                .text_color(theme.muted)
-                .child("+ relay_diff will expand this tab into file tree + hunks in Step 8"),
-        )
+        .child(hunks)
 }
 
 fn review_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
     let review_count = task.map_or(0, |task| task.review_comment_count);
     let pending_count = task.map_or(0, |task| task.pending_review_comment_count);
+    let mut comments = div().flex().flex_col().gap_2();
+    if let Some(task) = task {
+        for comment in &task.review_comments {
+            comments = comments.child(review_comment(theme, comment));
+        }
+    }
+
     div()
         .flex_1()
         .p_3()
@@ -134,14 +147,34 @@ fn review_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
         ))
         .child(
             div()
-                .rounded_md()
+                .rounded_sm()
                 .border_1()
                 .border_color(theme.line)
                 .bg(theme.chrome_alt)
-                .p_3()
-                .text_color(theme.muted)
-                .child("Review notes are task-scoped and can be sent to the active agent."),
+                .px_3()
+                .py_2()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.text)
+                        .child("Send pending notes"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(if pending_count == 0 {
+                            theme.muted
+                        } else {
+                            theme.accent
+                        })
+                        .child(if pending_count == 0 { "CLEAN" } else { "DIRTY" }),
+                ),
         )
+        .child(comments)
 }
 
 fn summary(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
@@ -203,6 +236,109 @@ fn file_row(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
         )
 }
 
+fn tree_row(theme: RelayTheme, row: &DiffTreeRow) -> gpui::Div {
+    match row.kind {
+        DiffTreeRowKind::Directory => div()
+            .px_2()
+            .py_1()
+            .ml(px((row.depth as f32) * 12.0))
+            .text_xs()
+            .text_color(theme.muted)
+            .child(format!("{}/  {}", row.label, row.file_count)),
+        DiffTreeRowKind::File => {
+            let status = row.status.unwrap_or(ChangeStatus::Modified);
+            file_row(
+                theme,
+                &ChangedFile {
+                    path: row.path.clone(),
+                    status,
+                },
+            )
+            .ml(px((row.depth as f32) * 12.0))
+        }
+    }
+}
+
+fn hunk_card(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
+    let (label, color) = change_label(theme, file.status);
+    div()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.chrome_alt)
+        .p_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(color)
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.text)
+                        .child(file.path.clone()),
+                ),
+        )
+        .child(
+            div()
+                .font_family("Consolas")
+                .text_xs()
+                .text_color(theme.muted)
+                .child(hunk_preview(file.status)),
+        )
+}
+
+fn review_comment(theme: RelayTheme, comment: &ReviewCommentProjection) -> gpui::Div {
+    div()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.chrome_alt)
+        .p_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted)
+                        .child(format!("{} · {}", comment.path, comment.line_label)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(if comment.delivered {
+                            theme.muted
+                        } else {
+                            theme.warning
+                        })
+                        .child(if comment.delivered { "SENT" } else { "PENDING" }),
+                ),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.text)
+                .child(comment.body.clone()),
+        )
+}
+
 fn metric_row(theme: RelayTheme, label: &'static str, value: String) -> gpui::Div {
     div()
         .flex()
@@ -218,4 +354,23 @@ fn metric_row(theme: RelayTheme, label: &'static str, value: String) -> gpui::Di
                 .font_weight(gpui::FontWeight::BOLD)
                 .child(value),
         )
+}
+
+fn change_label(theme: RelayTheme, status: ChangeStatus) -> (&'static str, gpui::Hsla) {
+    match status {
+        ChangeStatus::Added => ("A", theme.accent),
+        ChangeStatus::Modified => ("M", theme.warning),
+        ChangeStatus::Deleted => ("D", theme.danger),
+        ChangeStatus::Renamed => ("R", theme.warning),
+        ChangeStatus::Untracked => ("U", theme.accent),
+    }
+}
+
+fn hunk_preview(status: ChangeStatus) -> &'static str {
+    match status {
+        ChangeStatus::Added | ChangeStatus::Untracked => "+ new lines ready for review",
+        ChangeStatus::Modified => "- previous line\n+ updated line",
+        ChangeStatus::Deleted => "- removed lines",
+        ChangeStatus::Renamed => "rename path with content preserved",
+    }
 }

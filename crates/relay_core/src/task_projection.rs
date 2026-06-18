@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ids::{TaskId, TerminalSessionId},
-    task::{AgentKind, ChangedFile, Task, TaskStatus, Timestamp},
+    ids::{ReviewCommentId, TaskId, TerminalSessionId},
+    task::{AgentKind, ChangedFile, DiffSide, ReviewComment, Task, TaskStatus, Timestamp},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +29,7 @@ pub struct TaskProjection {
     pub worktree_path: Option<String>,
     pub changed_files: Vec<ChangedFile>,
     pub changed_file_count: usize,
+    pub review_comments: Vec<ReviewCommentProjection>,
     pub review_comment_count: usize,
     pub pending_review_comment_count: usize,
     pub preview_target_count: usize,
@@ -36,9 +37,24 @@ pub struct TaskProjection {
     pub last_activity_at: Timestamp,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewCommentProjection {
+    pub id: ReviewCommentId,
+    pub path: String,
+    pub line_label: String,
+    pub body: String,
+    pub delivered: bool,
+}
+
 impl TaskProjection {
     pub fn from_task(task: &Task) -> Self {
-        let delivered = task.diff_review.delivered_comments.len();
+        let delivered_comment_ids = task
+            .diff_review
+            .delivered_comments
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<std::collections::HashSet<_>>();
+        let delivered = delivered_comment_ids.len();
         let comment_count = task.diff_review.comments.len();
         let meta = task
             .worktree
@@ -60,11 +76,46 @@ impl TaskProjection {
             worktree_path: task.worktree.as_ref().map(|worktree| worktree.path.clone()),
             changed_files: task.changed_files.clone(),
             changed_file_count: task.changed_files.len(),
+            review_comments: task
+                .diff_review
+                .comments
+                .iter()
+                .map(|comment| {
+                    ReviewCommentProjection::from_comment(
+                        comment,
+                        delivered_comment_ids.contains(&comment.id),
+                    )
+                })
+                .collect(),
             review_comment_count: comment_count,
             pending_review_comment_count: comment_count.saturating_sub(delivered),
             preview_target_count: task.preview_targets.len(),
             failure_summary: task.failure.as_ref().map(|failure| failure.message.clone()),
             last_activity_at: task.last_activity_at,
+        }
+    }
+}
+
+impl ReviewCommentProjection {
+    fn from_comment(comment: &ReviewComment, delivered: bool) -> Self {
+        Self {
+            id: comment.id,
+            path: comment.path.clone(),
+            line_label: comment
+                .line
+                .as_ref()
+                .map(|line| {
+                    let line_number = match line.side {
+                        DiffSide::Old => line.old_line,
+                        DiffSide::New => line.new_line,
+                    };
+                    line_number
+                        .map(|number| format!("{:?} line {}", line.side, number))
+                        .unwrap_or_else(|| "file".to_string())
+                })
+                .unwrap_or_else(|| "file".to_string()),
+            body: comment.body.clone(),
+            delivered,
         }
     }
 }
