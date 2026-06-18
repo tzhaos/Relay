@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/relay_agent",
     "crates/relay_app",
     "crates/relay_core",
     "crates/relay_persistence",
@@ -21,6 +22,8 @@ publish = false
 anyhow = "1"
 directories = "6"
 gpui = "0.2.2"
+regex = "1.12.2"
+relay_agent = { path = "crates/relay_agent" }
 relay_core = { path = "crates/relay_core" }
 relay_infra = { path = "crates/relay_infra" }
 relay_persistence = { path = "crates/relay_persistence" }
@@ -39,3 +42,4 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["serde", "v4"] }
+which = "6.0.3"

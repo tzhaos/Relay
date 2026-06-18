@@ -4340,6 +4340,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "relay_agent"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "relay_core",
+ "relay_terminal",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "which",
+]
+
+[[package]]
 name = "relay_app"
 version = "0.1.0"
 dependencies = [

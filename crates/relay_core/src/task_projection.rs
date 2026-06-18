@@ -73,7 +73,7 @@ fn status_tone(status: TaskStatus) -> StatusTone {
         TaskStatus::CreatingWorktree | TaskStatus::WaitingForUser | TaskStatus::Reviewing => {
             StatusTone::Warning
         }
-        TaskStatus::Blocked | TaskStatus::Failed => StatusTone::Danger,
+        TaskStatus::Blocked | TaskStatus::Failed | TaskStatus::Stale => StatusTone::Danger,
         TaskStatus::Done | TaskStatus::Archived => StatusTone::Muted,
         TaskStatus::Draft | TaskStatus::ReadyToCommit => StatusTone::Neutral,
     }

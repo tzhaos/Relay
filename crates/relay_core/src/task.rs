@@ -26,6 +26,7 @@ pub enum TaskStatus {
     WaitingForUser,
     Blocked,
     Done,
+    Stale,
     Reviewing,
     ReadyToCommit,
     Archived,
@@ -42,6 +43,7 @@ impl TaskStatus {
             Self::WaitingForUser => "WAITING",
             Self::Blocked => "BLOCKED",
             Self::Done => "DONE",
+            Self::Stale => "STALE",
             Self::Reviewing => "REVIEW",
             Self::ReadyToCommit => "READY",
             Self::Archived => "ARCHIVED",
@@ -85,6 +87,7 @@ pub enum AgentRuntimeStatus {
     Blocked,
     Waiting,
     Done,
+    Stale,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -348,6 +351,7 @@ impl Task {
                     AgentRuntimeStatus::Blocked => TaskStatus::Blocked,
                     AgentRuntimeStatus::Waiting => TaskStatus::WaitingForUser,
                     AgentRuntimeStatus::Done => TaskStatus::Done,
+                    AgentRuntimeStatus::Stale => TaskStatus::Stale,
                 };
                 if let Some(kind) = &event.update.agent_kind {
                     self.agent_kind = Some(kind.clone());
