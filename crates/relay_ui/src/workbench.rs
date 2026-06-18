@@ -31,6 +31,7 @@ pub enum WorkbenchCommand {
     AppendContextFilter(String),
     BackspaceContextFilter,
     ClearContextFilter,
+    OpenChangedFile(String),
     AppendTaskTitleDraft(String),
     BackspaceTaskTitleDraft,
     ClearTaskTitleDraft,
@@ -278,6 +279,11 @@ impl WorkspaceViewModel {
                 self.context_filter.clear();
                 self.focus = FocusTarget::ContextPane;
             }
+            WorkbenchCommand::OpenChangedFile(path) => {
+                self.context_filter = path;
+                self.context_tab = ContextTab::Diff;
+                self.focus = FocusTarget::ContextPane;
+            }
             WorkbenchCommand::AppendTaskTitleDraft(text) => {
                 self.task_title_draft.push_str(&text);
                 self.focus = FocusTarget::TaskList;
@@ -507,6 +513,23 @@ mod tests {
 
         view_model.apply_command(WorkbenchCommand::ClearContextFilter);
         assert!(view_model.context_filter.is_empty());
+    }
+
+    #[test]
+    fn open_changed_file_should_filter_diff_and_focus_context() {
+        let mut view_model =
+            WorkspaceViewModel::new(vec![demo_projection("One", AgentRuntimeStatus::Working, 0)]);
+
+        view_model.apply_command(WorkbenchCommand::OpenChangedFile(
+            "crates/relay_ui/src/diff_pane.rs".to_string(),
+        ));
+
+        assert_eq!(view_model.context_tab, ContextTab::Diff);
+        assert_eq!(
+            view_model.context_filter,
+            "crates/relay_ui/src/diff_pane.rs"
+        );
+        assert_eq!(view_model.focus, FocusTarget::ContextPane);
     }
 
     #[test]

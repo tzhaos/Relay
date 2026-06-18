@@ -42,7 +42,7 @@ pub fn context_pane(
             cx,
         ))
         .child(match view_model.context_tab {
-            ContextTab::Files => files_tab(theme, active_task, filter),
+            ContextTab::Files => files_tab(theme, active_task, filter, cx),
             ContextTab::Diff => diff_tab(
                 theme,
                 active_task,
@@ -235,7 +235,12 @@ impl ContextTab {
     }
 }
 
-fn files_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> gpui::Div {
+fn files_tab(
+    theme: RelayTheme,
+    task: Option<&TaskProjection>,
+    filter: &str,
+    cx: &mut Context<AppShell>,
+) -> gpui::Div {
     let mut rows = div().flex().flex_col().gap_1();
     let mut row_count = 0;
     if let Some(task) = task {
@@ -243,7 +248,7 @@ fn files_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> 
         let tree = DiffTree::from_changed_files(&changed_files);
         for row in &tree.rows {
             row_count += 1;
-            rows = rows.child(tree_row(theme, row));
+            rows = rows.child(tree_row(theme, row, cx));
         }
     }
 
@@ -450,7 +455,7 @@ fn summary(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
         )
 }
 
-fn file_row(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
+fn file_row(theme: RelayTheme, file: &ChangedFile, cx: &mut Context<AppShell>) -> impl IntoElement {
     let (label, color) = match file.status {
         ChangeStatus::Added => ("A", theme.accent),
         ChangeStatus::Modified => ("M", theme.warning),
@@ -458,6 +463,7 @@ fn file_row(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
         ChangeStatus::Renamed => ("R", theme.warning),
         ChangeStatus::Untracked => ("U", theme.accent),
     };
+    let path = file.path.clone();
 
     div()
         .rounded_md()
@@ -467,6 +473,15 @@ fn file_row(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
         .items_center()
         .gap_2()
         .bg(theme.chrome)
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.panel).border_color(theme.selection_line))
+        .id((
+            gpui::ElementId::from(gpui::SharedString::from(path.clone())),
+            "changed-file",
+        ))
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::OpenChangedFile(path.clone()), cx);
+        }))
         .child(
             div()
                 .text_xs()
@@ -484,7 +499,7 @@ fn file_row(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
         )
 }
 
-fn tree_row(theme: RelayTheme, row: &DiffTreeRow) -> gpui::Div {
+fn tree_row(theme: RelayTheme, row: &DiffTreeRow, cx: &mut Context<AppShell>) -> gpui::AnyElement {
     match row.kind {
         DiffTreeRowKind::Directory => div()
             .px_2()
@@ -492,17 +507,21 @@ fn tree_row(theme: RelayTheme, row: &DiffTreeRow) -> gpui::Div {
             .ml(px((row.depth as f32) * 12.0))
             .text_xs()
             .text_color(theme.muted)
-            .child(format!("{}/  {}", row.label, row.file_count)),
+            .child(format!("{}/  {}", row.label, row.file_count))
+            .into_any_element(),
         DiffTreeRowKind::File => {
             let status = row.status.unwrap_or(ChangeStatus::Modified);
-            file_row(
-                theme,
-                &ChangedFile {
-                    path: row.path.clone(),
-                    status,
-                },
-            )
-            .ml(px((row.depth as f32) * 12.0))
+            div()
+                .ml(px((row.depth as f32) * 12.0))
+                .child(file_row(
+                    theme,
+                    &ChangedFile {
+                        path: row.path.clone(),
+                        status,
+                    },
+                    cx,
+                ))
+                .into_any_element()
         }
     }
 }
