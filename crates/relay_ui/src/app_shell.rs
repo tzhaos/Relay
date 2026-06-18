@@ -20,6 +20,7 @@ pub struct AppShell {
     view_model: WorkspaceViewModel,
     task_data_source: Box<dyn TaskDataSource>,
     terminal_focus: FocusHandle,
+    task_title_focus: FocusHandle,
     context_filter_focus: FocusHandle,
     review_draft_focus: FocusHandle,
     last_error: Option<String>,
@@ -99,6 +100,7 @@ impl AppShell {
             view_model: WorkspaceViewModel::for_project(project_label, tasks),
             task_data_source,
             terminal_focus: cx.focus_handle(),
+            task_title_focus: cx.focus_handle(),
             context_filter_focus: cx.focus_handle(),
             review_draft_focus: cx.focus_handle(),
             last_error: None,
@@ -255,6 +257,10 @@ impl AppShell {
         &self.terminal_focus
     }
 
+    pub(crate) fn task_title_focus(&self) -> &FocusHandle {
+        &self.task_title_focus
+    }
+
     pub(crate) fn context_filter_focus(&self) -> &FocusHandle {
         &self.context_filter_focus
     }
@@ -288,6 +294,44 @@ impl AppShell {
                     .filter(|text| text.chars().all(|character| !character.is_control()))
                 {
                     self.dispatch(WorkbenchCommand::AppendContextFilter(text), cx);
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn handle_task_title_key(
+        &mut self,
+        event: &KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let keystroke = event.keystroke.clone().with_simulated_ime();
+        match keystroke.key.as_str() {
+            "escape" => {
+                self.dispatch(WorkbenchCommand::ClearTaskTitleDraft, cx);
+                true
+            }
+            "backspace" => {
+                self.dispatch(WorkbenchCommand::BackspaceTaskTitleDraft, cx);
+                true
+            }
+            "enter" => {
+                self.dispatch(WorkbenchCommand::CreateTask, cx);
+                true
+            }
+            _ if !keystroke.modifiers.control
+                && !keystroke.modifiers.alt
+                && !keystroke.modifiers.platform
+                && !keystroke.modifiers.function =>
+            {
+                if let Some(text) = keystroke
+                    .key_char
+                    .filter(|text| text.chars().all(|character| !character.is_control()))
+                {
+                    self.dispatch(WorkbenchCommand::AppendTaskTitleDraft(text), cx);
                     true
                 } else {
                     false
@@ -336,7 +380,12 @@ impl AppShell {
     }
 
     fn create_task(&mut self, cx: &mut Context<Self>) {
-        let title = format!("New task {}", self.view_model.tasks.len() + 1);
+        let title = self.view_model.task_title_draft.trim().to_string();
+        if title.is_empty() {
+            cx.notify();
+            return;
+        }
+
         match self.task_data_source.create_task(&title) {
             Ok(tasks) => {
                 let project_label = self.view_model.project_label.clone();
@@ -544,6 +593,7 @@ impl Render for AppShell {
                     .child(task_list(
                         self.theme,
                         &self.view_model,
+                        self.task_title_focus(),
                         self.terminal_focus(),
                         cx,
                     ))

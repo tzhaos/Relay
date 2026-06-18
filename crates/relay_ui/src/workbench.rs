@@ -16,6 +16,7 @@ pub enum ContextTab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusTarget {
     Terminal,
+    TaskList,
     ContextPane,
 }
 
@@ -28,6 +29,9 @@ pub enum WorkbenchCommand {
     AppendContextFilter(String),
     BackspaceContextFilter,
     ClearContextFilter,
+    AppendTaskTitleDraft(String),
+    BackspaceTaskTitleDraft,
+    ClearTaskTitleDraft,
     SelectReviewTarget(ReviewDraftTarget),
     AppendReviewDraft(String),
     BackspaceReviewDraft,
@@ -106,6 +110,7 @@ pub struct WorkspaceViewModel {
     pub active_task_id: Option<TaskId>,
     pub pane_route: PaneRoute,
     pub context_tab: ContextTab,
+    pub task_title_draft: String,
     pub context_filter: String,
     pub review_draft: ReviewDraftState,
     pub focus: FocusTarget,
@@ -123,6 +128,7 @@ impl WorkspaceViewModel {
             tasks,
             pane_route: PaneRoute::Terminal,
             context_tab: ContextTab::Files,
+            task_title_draft: String::new(),
             context_filter: String::new(),
             review_draft: ReviewDraftState::default(),
             focus: FocusTarget::Terminal,
@@ -158,6 +164,7 @@ impl WorkspaceViewModel {
     pub fn focus_label(&self) -> &'static str {
         match self.focus {
             FocusTarget::Terminal => "Terminal",
+            FocusTarget::TaskList => "Tasks",
             FocusTarget::ContextPane => "Context",
         }
     }
@@ -218,6 +225,10 @@ impl WorkspaceViewModel {
         self.review_draft.target.is_some() && !self.review_draft.body.trim().is_empty()
     }
 
+    pub fn can_create_task_from_draft(&self) -> bool {
+        !self.task_title_draft.trim().is_empty()
+    }
+
     pub fn apply_command(&mut self, command: WorkbenchCommand) {
         match command {
             WorkbenchCommand::ActivateTask(task_id) => {
@@ -260,6 +271,18 @@ impl WorkspaceViewModel {
             WorkbenchCommand::ClearContextFilter => {
                 self.context_filter.clear();
                 self.focus = FocusTarget::ContextPane;
+            }
+            WorkbenchCommand::AppendTaskTitleDraft(text) => {
+                self.task_title_draft.push_str(&text);
+                self.focus = FocusTarget::TaskList;
+            }
+            WorkbenchCommand::BackspaceTaskTitleDraft => {
+                self.task_title_draft.pop();
+                self.focus = FocusTarget::TaskList;
+            }
+            WorkbenchCommand::ClearTaskTitleDraft => {
+                self.task_title_draft.clear();
+                self.focus = FocusTarget::TaskList;
             }
             WorkbenchCommand::SelectReviewTarget(target) => {
                 if self.tasks.iter().any(|task| task.id == target.task_id) {
@@ -477,6 +500,24 @@ mod tests {
 
         view_model.apply_command(WorkbenchCommand::ClearContextFilter);
         assert!(view_model.context_filter.is_empty());
+    }
+
+    #[test]
+    fn task_title_draft_commands_should_track_title_and_focus_tasks() {
+        let mut view_model =
+            WorkspaceViewModel::new(vec![demo_projection("One", AgentRuntimeStatus::Working, 0)]);
+
+        view_model.apply_command(WorkbenchCommand::AppendTaskTitleDraft(
+            "Implement parser".to_string(),
+        ));
+        view_model.apply_command(WorkbenchCommand::BackspaceTaskTitleDraft);
+
+        assert_eq!(view_model.task_title_draft, "Implement parse");
+        assert_eq!(view_model.focus, FocusTarget::TaskList);
+        assert!(view_model.can_create_task_from_draft());
+
+        view_model.apply_command(WorkbenchCommand::ClearTaskTitleDraft);
+        assert!(view_model.task_title_draft.is_empty());
     }
 
     #[test]
