@@ -333,7 +333,9 @@ impl Task {
                 })])
             }
             TaskCommand::Archive { now } => {
-                self.ensure_mutable()?;
+                if self.status == TaskStatus::Archived {
+                    return Err(TaskError::InvalidStatus(self.status));
+                }
                 Ok(vec![TaskEvent::TaskArchived(TaskArchived {
                     task_id: self.id,
                     occurred_at: now,
@@ -647,6 +649,38 @@ mod tests {
                 now: now(),
             })
             .expect_err("archived task is immutable");
+
+        assert_eq!(error, TaskError::InvalidStatus(TaskStatus::Archived));
+    }
+
+    #[test]
+    fn failed_task_should_still_allow_archive() {
+        let (mut task, mut log) = create_task("Archive failed task");
+        apply_command(
+            &mut task,
+            &mut log,
+            TaskCommand::MarkFailed {
+                failure: crate::ProviderFailure {
+                    provider: Some("terminal".to_string()),
+                    message: "spawn failed".to_string(),
+                },
+                now: now(),
+            },
+        );
+
+        apply_command(&mut task, &mut log, TaskCommand::Archive { now: now() });
+
+        assert_eq!(task.status, TaskStatus::Archived);
+    }
+
+    #[test]
+    fn archived_task_should_reject_duplicate_archive() {
+        let (mut task, mut log) = create_task("Archive once");
+        apply_command(&mut task, &mut log, TaskCommand::Archive { now: now() });
+
+        let error = task
+            .handle(TaskCommand::Archive { now: now() })
+            .expect_err("archived task should not archive again");
 
         assert_eq!(error, TaskError::InvalidStatus(TaskStatus::Archived));
     }

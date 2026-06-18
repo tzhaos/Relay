@@ -434,7 +434,7 @@ fn task_bucket(task: &TaskProjection) -> TaskBucket {
 }
 
 fn can_archive_task(task: &TaskProjection) -> bool {
-    !matches!(task.status, TaskStatus::Archived | TaskStatus::Failed)
+    task.status != TaskStatus::Archived
 }
 
 fn worktree_name(path: &str) -> String {
@@ -537,6 +537,15 @@ mod tests {
                 runtime_label: "3 terminals".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn task_list_item_should_allow_failed_but_not_archived_tasks_to_archive() {
+        let failed = failed_projection("Failed");
+        let archived = archived_projection("Archived");
+
+        assert!(can_archive_task(&failed));
+        assert!(!can_archive_task(&archived));
     }
 
     #[test]
