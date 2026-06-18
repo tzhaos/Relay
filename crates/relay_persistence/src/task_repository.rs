@@ -1,4 +1,4 @@
-use relay_core::{Task, TaskEvent, TaskId, TaskProjection};
+use relay_core::{ProjectId, Task, TaskEvent, TaskId, TaskProjection};
 use rusqlite::{Connection, OptionalExtension, params};
 use time::format_description::well_known::Rfc3339;
 
@@ -101,6 +101,21 @@ impl<'a> TaskRepository<'a> {
 
     pub fn list_tasks(&self) -> PersistenceResult<Vec<TaskProjection>> {
         let task_ids = self.task_ids()?;
+        self.load_task_projections(task_ids)
+    }
+
+    pub fn list_tasks_for_project(
+        &self,
+        project_id: ProjectId,
+    ) -> PersistenceResult<Vec<TaskProjection>> {
+        let task_ids = self.task_ids_for_project(project_id)?;
+        self.load_task_projections(task_ids)
+    }
+
+    fn load_task_projections(
+        &self,
+        task_ids: Vec<TaskId>,
+    ) -> PersistenceResult<Vec<TaskProjection>> {
         let mut projections = Vec::with_capacity(task_ids.len());
         for task_id in task_ids {
             if let Some(task) = self.load_task(task_id)? {
@@ -126,6 +141,29 @@ impl<'a> TaskRepository<'a> {
         for row in rows {
             let event: TaskEvent = serde_json::from_str(&row?)?;
             ids.push(event.task_id());
+        }
+        Ok(ids)
+    }
+
+    fn task_ids_for_project(&self, project_id: ProjectId) -> PersistenceResult<Vec<TaskId>> {
+        let mut statement = self.connection.prepare(
+            r#"
+            SELECT event_json
+            FROM task_events
+            WHERE sequence = 0
+            ORDER BY occurred_at DESC
+            "#,
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+
+        let mut ids = Vec::new();
+        for row in rows {
+            let event: TaskEvent = serde_json::from_str(&row?)?;
+            if let TaskEvent::TaskCreated(created) = event
+                && created.project_id == project_id
+            {
+                ids.push(created.id);
+            }
         }
         Ok(ids)
     }
@@ -252,6 +290,43 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].changed_file_count, 1);
         assert_eq!(snapshot.title, "Persist task");
+    }
+
+    #[test]
+    fn list_tasks_for_project_should_filter_by_project_id() {
+        let mut database = RelayDatabase::in_memory().expect("database should open");
+        let project_one = ProjectId::new();
+        let project_two = ProjectId::new();
+        let (task_one, events_one) = relay_core::Task::create(CreateTask {
+            id: None,
+            project_id: project_one,
+            title: "Project one task".to_string(),
+            source: TaskSource::Manual,
+            now: now(),
+        })
+        .expect("first task should create");
+        let (_task_two, events_two) = relay_core::Task::create(CreateTask {
+            id: None,
+            project_id: project_two,
+            title: "Project two task".to_string(),
+            source: TaskSource::Manual,
+            now: now(),
+        })
+        .expect("second task should create");
+        let mut repository = database.task_repository();
+        repository
+            .append_events(&events_one)
+            .expect("first task should persist");
+        repository
+            .append_events(&events_two)
+            .expect("second task should persist");
+
+        let tasks = repository
+            .list_tasks_for_project(project_one)
+            .expect("project tasks should load");
+
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, task_one.id);
     }
 
     fn apply_and_persist(

@@ -1,9 +1,12 @@
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use gpui::{
-    App, Bounds, Context, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, Render,
-    Task as GpuiTask, TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowDecorations,
-    WindowOptions, div, prelude::*, px, size,
+    App, Bounds, Context, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
+    PathPromptOptions, Render, Task as GpuiTask, TitlebarOptions, Window, WindowBounds,
+    WindowControlArea, WindowDecorations, WindowOptions, div, prelude::*, px, size,
 };
 use relay_core::{PreviewTargetId, TaskId, TaskProjection, TerminalSessionId};
 
@@ -28,6 +31,7 @@ pub struct AppShell {
 }
 
 pub trait TaskDataSource {
+    fn open_project(&mut self, path: &Path) -> anyhow::Result<WorkspaceData>;
     fn create_task(&mut self, title: &str) -> anyhow::Result<Vec<TaskProjection>>;
     fn launch_agent(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn deliver_review(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
@@ -50,6 +54,12 @@ pub trait TaskDataSource {
         &mut self,
         session_id: TerminalSessionId,
     ) -> anyhow::Result<Option<TerminalPaneProjection>>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceData {
+    pub project_label: String,
+    pub tasks: Vec<TaskProjection>,
 }
 
 impl AppShell {
@@ -114,7 +124,7 @@ impl AppShell {
         }
     }
 
-    fn title_bar(&self, window: &mut Window) -> impl IntoElement {
+    fn title_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let summary = self.view_model.status_summary();
 
         div()
@@ -126,13 +136,13 @@ impl AppShell {
             .border_b_1()
             .border_color(self.theme.line)
             .bg(self.theme.chrome)
-            .window_control_area(WindowControlArea::Drag)
             .child(
                 div()
                     .min_w_0()
                     .flex()
                     .items_center()
                     .gap_2()
+                    .window_control_area(WindowControlArea::Drag)
                     .child(title_mark(self.theme))
                     .child(
                         div()
@@ -164,6 +174,7 @@ impl AppShell {
                     .items_center()
                     .justify_center()
                     .gap_2()
+                    .window_control_area(WindowControlArea::Drag)
                     .child(title_badge(
                         self.theme,
                         self.view_model.project_label.clone(),
@@ -179,6 +190,7 @@ impl AppShell {
                     .h_full()
                     .flex()
                     .items_center()
+                    .child(title_action_button(self.theme, "Open", cx))
                     .child(header_stat(
                         self.theme,
                         "Tasks",
@@ -230,6 +242,10 @@ impl AppShell {
     }
 
     pub(crate) fn dispatch(&mut self, command: WorkbenchCommand, cx: &mut Context<Self>) {
+        if command == WorkbenchCommand::OpenProject {
+            self.open_project_picker(cx);
+            return;
+        }
         if command == WorkbenchCommand::CreateTask {
             self.create_task(cx);
             return;
@@ -264,6 +280,57 @@ impl AppShell {
         }
 
         self.view_model.apply_command(command);
+        cx.notify();
+    }
+
+    fn open_project_picker(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Open Project".into()),
+        });
+
+        cx.spawn(async move |this, cx| {
+            let selected_path = match paths.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) => None,
+                Ok(Err(error)) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.last_error = Some(error.to_string());
+                        cx.notify();
+                    });
+                    None
+                }
+                Err(error) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.last_error = Some(error.to_string());
+                        cx.notify();
+                    });
+                    None
+                }
+            };
+
+            if let Some(path) = selected_path {
+                let _ = this.update(cx, |this, cx| {
+                    this.open_project_path(path, cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn open_project_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        match self.task_data_source.open_project(&path) {
+            Ok(workspace) => {
+                self.view_model =
+                    WorkspaceViewModel::for_project(workspace.project_label, workspace.tasks);
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
         cx.notify();
     }
 
@@ -627,7 +694,7 @@ impl Render for AppShell {
             .bg(self.theme.bg)
             .flex()
             .flex_col()
-            .child(self.title_bar(window))
+            .child(self.title_bar(window, cx))
             .child(
                 div()
                     .flex()
@@ -712,6 +779,33 @@ fn header_stat(theme: RelayTheme, label: &'static str, value: String) -> gpui::D
                 .text_color(theme.text)
                 .child(value),
         )
+}
+
+fn title_action_button(
+    theme: RelayTheme,
+    label: &'static str,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
+    div()
+        .h(px(26.0))
+        .mr_2()
+        .px_3()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.panel)
+        .flex()
+        .items_center()
+        .text_sm()
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(theme.text)
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.selection))
+        .id("open-project")
+        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::OpenProject, cx);
+        }))
+        .child(label)
 }
 
 fn window_controls(theme: RelayTheme, window: &Window) -> gpui::Div {

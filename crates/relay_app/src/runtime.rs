@@ -24,7 +24,9 @@ use relay_preview::{
 use relay_project::{CreateTaskWorktree, Project, ProjectService};
 use relay_terminal::{PtyProvider, TerminalError, TerminalEvent, TerminalRuntime, TerminalSpawn};
 use relay_ui::{
-    app_shell::TaskDataSource, terminal_pane::TerminalPaneProjection, workbench::ReviewDraftTarget,
+    app_shell::{TaskDataSource, WorkspaceData},
+    terminal_pane::TerminalPaneProjection,
+    workbench::ReviewDraftTarget,
 };
 use time::OffsetDateTime;
 use url::Url;
@@ -32,6 +34,7 @@ use url::Url;
 const WORKSPACE_NAMESPACE: &str = "workspace";
 const DEFAULT_PROJECT_ID_KEY: &str = "default_project_id";
 const DEFAULT_PROJECT_ROOT_KEY: &str = "default_project_root";
+const PROJECT_IDS_BY_ROOT_KEY: &str = "project_ids_by_root";
 const TASK_BRANCH_PREFIX: &str = "relay";
 const TERMINAL_COLS: u16 = 120;
 const TERMINAL_ROWS: u16 = 32;
@@ -47,6 +50,7 @@ pub struct RelayRuntime {
     preview_opener: Box<dyn PreviewOpener>,
     terminal_task_ids: HashMap<TerminalSessionId, TaskId>,
     project: Project,
+    worktrees_root: PathBuf,
     worktrees_dir: PathBuf,
 }
 
@@ -61,13 +65,10 @@ impl RelayRuntime {
         agent_registry: AgentRegistry,
     ) -> Result<Self> {
         let project_service = ProjectService::default();
-        let project_id = load_or_create_project_id(&mut database)?;
-        let project = load_or_open_project(&mut database, &project_service, project_id)?;
-        let worktrees_dir = paths
-            .data_dir
-            .join("worktrees")
-            .join(project.id.to_string());
-        let terminal_task_ids = load_terminal_task_ids(&mut database)?;
+        let project = load_or_open_project(&mut database, &project_service)?;
+        let worktrees_root = paths.data_dir.join("worktrees");
+        let worktrees_dir = worktrees_root.join(project.id.to_string());
+        let terminal_task_ids = load_terminal_task_ids(&mut database, project.id)?;
 
         let mut runtime = Self {
             database,
@@ -79,6 +80,7 @@ impl RelayRuntime {
             preview_opener: Box::new(SystemPreviewOpener),
             terminal_task_ids,
             project,
+            worktrees_root,
             worktrees_dir,
         };
         runtime.restore_terminal_sessions()?;
@@ -92,6 +94,20 @@ impl RelayRuntime {
     pub fn load_tasks(&mut self) -> Result<Vec<TaskProjection>> {
         self.refresh_changed_files()?;
         self.list_task_projections()
+    }
+
+    fn open_project_root(&mut self, path: &Path) -> Result<WorkspaceData> {
+        let project = open_project_at(&mut self.database, &self.project_service, path)?;
+        self.terminal_runtime = TerminalRuntime::new();
+        self.terminal_task_ids = load_terminal_task_ids(&mut self.database, project.id)?;
+        self.worktrees_dir = self.worktrees_root.join(project.id.to_string());
+        self.project = project;
+        self.restore_terminal_sessions()?;
+
+        Ok(WorkspaceData {
+            project_label: self.project_label().to_string(),
+            tasks: self.load_tasks()?,
+        })
     }
 
     fn create_task_with_worktree(&mut self, title: &str) -> Result<Vec<TaskProjection>> {
@@ -370,7 +386,7 @@ impl RelayRuntime {
         let task_ids = self
             .database
             .task_repository()
-            .list_tasks()?
+            .list_tasks_for_project(self.project.id)?
             .into_iter()
             .map(|task| task.id)
             .collect::<Vec<_>>();
@@ -416,7 +432,7 @@ impl RelayRuntime {
         let task_ids = self
             .database
             .task_repository()
-            .list_tasks()?
+            .list_tasks_for_project(self.project.id)?
             .into_iter()
             .map(|task| task.id)
             .collect::<Vec<_>>();
@@ -456,7 +472,10 @@ impl RelayRuntime {
     }
 
     fn list_task_projections(&mut self) -> Result<Vec<TaskProjection>> {
-        let mut tasks = self.database.task_repository().list_tasks()?;
+        let mut tasks = self
+            .database
+            .task_repository()
+            .list_tasks_for_project(self.project.id)?;
         self.enrich_diff_projections(&mut tasks)?;
         Ok(tasks)
     }
@@ -632,6 +651,10 @@ impl RelayRuntime {
 }
 
 impl TaskDataSource for RelayRuntime {
+    fn open_project(&mut self, path: &Path) -> Result<WorkspaceData> {
+        self.open_project_root(path)
+    }
+
     fn create_task(&mut self, title: &str) -> Result<Vec<TaskProjection>> {
         self.create_task_with_worktree(title)
     }
@@ -680,27 +703,9 @@ impl TaskDataSource for RelayRuntime {
     }
 }
 
-fn load_or_create_project_id(database: &mut RelayDatabase) -> Result<ProjectId> {
-    if let Some(project_id) = database
-        .settings_repository()
-        .get_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ID_KEY)?
-    {
-        return Ok(project_id);
-    }
-
-    let project_id = ProjectId::new();
-    database.settings_repository().set_json(
-        WORKSPACE_NAMESPACE,
-        DEFAULT_PROJECT_ID_KEY,
-        &project_id,
-    )?;
-    Ok(project_id)
-}
-
 fn load_or_open_project(
     database: &mut RelayDatabase,
     project_service: &ProjectService,
-    project_id: ProjectId,
 ) -> Result<Project> {
     let stored_root = database
         .settings_repository()
@@ -708,26 +713,86 @@ fn load_or_open_project(
     let current_dir = std::env::current_dir().context("failed to read current directory")?;
     let candidate = stored_root.as_deref().unwrap_or(&current_dir);
 
-    let mut project = match project_service.open_repo(candidate) {
-        Ok(project) => project,
+    match open_project_at(database, project_service, candidate) {
+        Ok(project) => Ok(project),
         Err(error) if stored_root.is_some() => {
-            project_service.open_repo(&current_dir).with_context(|| {
+            open_project_at(database, project_service, &current_dir).with_context(|| {
                 format!(
                     "stored project root {} could not be opened: {error}",
                     candidate.display()
                 )
-            })?
+            })
         }
-        Err(error) => return Err(error).context("failed to open current directory as git repo"),
+        Err(error) => Err(error).context("failed to open current directory as git repo"),
+    }
+}
+
+fn open_project_at(
+    database: &mut RelayDatabase,
+    project_service: &ProjectService,
+    path: &Path,
+) -> Result<Project> {
+    let mut project = project_service.open_repo(path)?;
+    project.id = load_or_create_project_id_for_root(database, &project.root)?;
+    save_default_project(database, &project)?;
+
+    Ok(project)
+}
+
+fn load_or_create_project_id_for_root(
+    database: &mut RelayDatabase,
+    root: &Path,
+) -> Result<ProjectId> {
+    let root_key = project_root_key(root);
+    let mut project_ids = database
+        .settings_repository()
+        .get_json::<HashMap<String, ProjectId>>(WORKSPACE_NAMESPACE, PROJECT_IDS_BY_ROOT_KEY)?
+        .unwrap_or_default();
+    if let Some(project_id) = project_ids.get(&root_key).copied() {
+        return Ok(project_id);
+    }
+
+    let stored_root = database
+        .settings_repository()
+        .get_json::<PathBuf>(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY)?;
+    let legacy_project_id = database
+        .settings_repository()
+        .get_json::<ProjectId>(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ID_KEY)?;
+    let project_id = if project_ids.is_empty()
+        && stored_root
+            .as_deref()
+            .is_some_and(|stored_root| project_root_key(stored_root) == root_key)
+    {
+        legacy_project_id.unwrap_or_default()
+    } else {
+        ProjectId::new()
     };
-    project.id = project_id;
+
+    project_ids.insert(root_key, project_id);
+    database.settings_repository().set_json(
+        WORKSPACE_NAMESPACE,
+        PROJECT_IDS_BY_ROOT_KEY,
+        &project_ids,
+    )?;
+    Ok(project_id)
+}
+
+fn save_default_project(database: &mut RelayDatabase, project: &Project) -> Result<()> {
     database.settings_repository().set_json(
         WORKSPACE_NAMESPACE,
         DEFAULT_PROJECT_ROOT_KEY,
         &project.root,
     )?;
+    database.settings_repository().set_json(
+        WORKSPACE_NAMESPACE,
+        DEFAULT_PROJECT_ID_KEY,
+        &project.id,
+    )?;
+    Ok(())
+}
 
-    Ok(project)
+fn project_root_key(root: &Path) -> String {
+    root.to_string_lossy().to_string()
 }
 
 fn worktree_file_uri(path: &Path) -> Result<String> {
@@ -741,10 +806,11 @@ fn worktree_file_uri(path: &Path) -> Result<String> {
 
 fn load_terminal_task_ids(
     database: &mut RelayDatabase,
+    project_id: ProjectId,
 ) -> Result<HashMap<TerminalSessionId, TaskId>> {
     Ok(database
         .task_repository()
-        .list_tasks()?
+        .list_tasks_for_project(project_id)?
         .into_iter()
         .filter_map(|task| {
             task.terminal_session_id
@@ -942,6 +1008,43 @@ mod tests {
             .map(PathBuf::from)
             .expect("worktree path should exist");
         assert!(worktree_path.exists());
+    }
+
+    #[test]
+    fn open_project_root_should_switch_project_and_filter_tasks() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo_one = init_git_repo(temp.path().join("repo-one"));
+        let repo_two = init_git_repo(temp.path().join("repo-two"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo_one)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open(database, &paths).expect("runtime should open");
+        let repo_one_tasks = runtime
+            .create_task_with_worktree("Repo one task")
+            .expect("task should create");
+        let repo_one_task_id = repo_one_tasks[0].id;
+
+        let repo_two_workspace = runtime
+            .open_project_root(&repo_two)
+            .expect("second project should open");
+
+        assert_eq!(repo_two_workspace.project_label, "repo-two");
+        assert!(repo_two_workspace.tasks.is_empty());
+
+        let repo_one_workspace = runtime
+            .open_project_root(&repo_one)
+            .expect("first project should reopen");
+
+        assert_eq!(repo_one_workspace.project_label, "repo-one");
+        assert_eq!(repo_one_workspace.tasks[0].id, repo_one_task_id);
     }
 
     #[test]
