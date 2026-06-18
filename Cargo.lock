@@ -4364,12 +4364,14 @@ dependencies = [
  "relay_diff",
  "relay_infra",
  "relay_persistence",
+ "relay_preview",
  "relay_project",
  "relay_terminal",
  "relay_ui",
  "tempfile",
  "time",
  "tracing",
+ "url",
 ]
 
 [[package]]

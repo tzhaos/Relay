@@ -1,9 +1,15 @@
-use gpui::{div, prelude::*, px};
+use gpui::{
+    Context, InteractiveElement, IntoElement, StatefulInteractiveElement, div, prelude::*, px,
+};
 use relay_core::{PreviewTargetProjection, TaskProjection};
 
-use crate::theme::RelayTheme;
+use crate::{app_shell::AppShell, theme::RelayTheme, workbench::WorkbenchCommand};
 
-pub fn preview_content(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
+pub fn preview_content(
+    theme: RelayTheme,
+    task: Option<&TaskProjection>,
+    cx: &mut Context<AppShell>,
+) -> gpui::Div {
     let mut targets = div().flex().flex_col().gap_2();
     if let Some(task) = task {
         for target in &task.preview_targets {
@@ -28,6 +34,9 @@ pub fn preview_content(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui
                 .child(div().text_color(theme.text).child("Preview"))
                 .child(
                     div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
                         .text_sm()
                         .text_color(theme.muted)
                         .child(preview_count_label(task)),
@@ -41,8 +50,14 @@ pub fn preview_content(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui
                 .flex_col()
                 .gap_3()
                 .child(active_preview_summary(theme, task))
-                .child(targets)
-                .child(preview_target_state(theme, task)),
+                .child(
+                    if task.is_some_and(|task| task.preview_targets.is_empty()) {
+                        empty_preview_state(theme, task, cx).into_any_element()
+                    } else {
+                        targets.into_any_element()
+                    },
+                )
+                .child(preview_target_state(theme, task, cx)),
         )
 }
 
@@ -100,8 +115,52 @@ fn preview_target(theme: RelayTheme, target: &PreviewTargetProjection) -> gpui::
         )
 }
 
-fn preview_target_state(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
+fn empty_preview_state(
+    theme: RelayTheme,
+    task: Option<&TaskProjection>,
+    cx: &mut Context<AppShell>,
+) -> gpui::Div {
+    let worktree_label = task
+        .and_then(|task| task.worktree_path.clone())
+        .unwrap_or_else(|| "No worktree".to_string());
+
+    div()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.chrome)
+        .px_3()
+        .py_2()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(
+            div()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_sm().text_color(theme.text).child("Worktree"))
+                .child(
+                    div()
+                        .font_family("Consolas")
+                        .text_xs()
+                        .text_color(theme.muted)
+                        .truncate()
+                        .child(worktree_label),
+                ),
+        )
+        .children(attach_preview_action(theme, task, cx))
+}
+
+fn preview_target_state(
+    theme: RelayTheme,
+    task: Option<&TaskProjection>,
+    _cx: &mut Context<AppShell>,
+) -> gpui::Div {
     let has_preview = task.is_some_and(|task| !task.preview_targets.is_empty());
+    let can_attach = task.is_some_and(|task| task.worktree_path.is_some());
     div()
         .border_b_1()
         .border_color(theme.line)
@@ -115,17 +174,13 @@ fn preview_target_state(theme: RelayTheme, task: Option<&TaskProjection>) -> gpu
                 .text_color(theme.text)
                 .child("Preview target"),
         )
-        .child(
-            div()
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(if has_preview {
-                    theme.accent
-                } else {
-                    theme.muted
-                })
-                .child(if has_preview { "ATTACHED" } else { "DETACHED" }),
-        )
+        .child(if has_preview {
+            preview_state_badge(theme, "ATTACHED", theme.accent).into_any_element()
+        } else if can_attach {
+            preview_state_badge(theme, "READY", theme.warning).into_any_element()
+        } else {
+            preview_state_badge(theme, "DETACHED", theme.muted).into_any_element()
+        })
 }
 
 fn preview_count_label(task: Option<&TaskProjection>) -> String {
@@ -135,4 +190,63 @@ fn preview_count_label(task: Option<&TaskProjection>) -> String {
         1 => "1 target".to_string(),
         value => format!("{value} targets"),
     }
+}
+
+fn attach_preview_action(
+    theme: RelayTheme,
+    task: Option<&TaskProjection>,
+    cx: &mut Context<AppShell>,
+) -> Option<gpui::AnyElement> {
+    let task = task?;
+    if task.worktree_path.is_none() || task.preview_targets.iter().any(is_worktree_preview) {
+        return None;
+    }
+
+    Some(attach_worktree_button(theme, task.id, cx).into_any_element())
+}
+
+fn is_worktree_preview(target: &PreviewTargetProjection) -> bool {
+    target.label == "Worktree" && target.uri.starts_with("file://")
+}
+
+fn attach_worktree_button(
+    theme: RelayTheme,
+    task_id: relay_core::TaskId,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
+    div()
+        .h(px(24.0))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.selection_line)
+        .bg(theme.panel)
+        .flex()
+        .items_center()
+        .text_xs()
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(theme.text)
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.selection))
+        .id((gpui::ElementId::from(task_id.as_uuid()), "attach-preview"))
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::AttachWorktreePreview(task_id), cx);
+        }))
+        .child("Attach")
+}
+
+fn preview_state_badge(theme: RelayTheme, label: &'static str, color: gpui::Hsla) -> gpui::Div {
+    div()
+        .h(px(24.0))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.chrome_alt)
+        .flex()
+        .items_center()
+        .text_xs()
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(color)
+        .child(label)
 }

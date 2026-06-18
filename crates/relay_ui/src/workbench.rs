@@ -31,6 +31,7 @@ pub enum WorkbenchCommand {
     CreateTask,
     LaunchAgent(TaskId),
     DeliverReview(TaskId),
+    AttachWorktreePreview(TaskId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,6 +214,7 @@ impl WorkspaceViewModel {
             WorkbenchCommand::CreateTask => {}
             WorkbenchCommand::LaunchAgent(_) => {}
             WorkbenchCommand::DeliverReview(_) => {}
+            WorkbenchCommand::AttachWorktreePreview(_) => {}
         }
     }
 

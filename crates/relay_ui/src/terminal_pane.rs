@@ -144,7 +144,7 @@ pub fn terminal_pane(
         )
         .child(match view_model.pane_route {
             PaneRoute::Terminal => terminal_content(theme, projection),
-            PaneRoute::Preview => preview_content(theme, view_model.active_task()),
+            PaneRoute::Preview => preview_content(theme, view_model.active_task(), cx),
         })
 }
 

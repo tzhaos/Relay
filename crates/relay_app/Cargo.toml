@@ -17,11 +17,13 @@ relay_core.workspace = true
 relay_diff.workspace = true
 relay_infra.workspace = true
 relay_persistence.workspace = true
+relay_preview.workspace = true
 relay_project.workspace = true
 relay_terminal.workspace = true
 relay_ui.workspace = true
 time.workspace = true
 tracing.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

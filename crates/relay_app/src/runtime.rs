@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{Context as _, Result, anyhow};
 use relay_agent::{
@@ -14,10 +18,12 @@ use relay_core::{
 use relay_diff::{DiffEngine, DiffLineKind, DiffSnapshot, ReviewService};
 use relay_infra::paths::RelayPaths;
 use relay_persistence::RelayDatabase;
+use relay_preview::{LocalPreviewProvider, PreviewProvider, PreviewRequest};
 use relay_project::{CreateTaskWorktree, Project, ProjectService};
 use relay_terminal::{PtyProvider, TerminalError, TerminalEvent, TerminalRuntime, TerminalSpawn};
 use relay_ui::{app_shell::TaskDataSource, terminal_pane::TerminalPaneProjection};
 use time::OffsetDateTime;
+use url::Url;
 
 const WORKSPACE_NAMESPACE: &str = "workspace";
 const DEFAULT_PROJECT_ID_KEY: &str = "default_project_id";
@@ -33,6 +39,7 @@ pub struct RelayRuntime {
     diff_engine: DiffEngine,
     terminal_runtime: TerminalRuntime,
     agent_registry: AgentRegistry,
+    preview_provider: LocalPreviewProvider,
     terminal_task_ids: HashMap<TerminalSessionId, TaskId>,
     project: Project,
     worktrees_dir: PathBuf,
@@ -63,6 +70,7 @@ impl RelayRuntime {
             diff_engine: DiffEngine::default(),
             terminal_runtime: TerminalRuntime::new(),
             agent_registry,
+            preview_provider: LocalPreviewProvider,
             terminal_task_ids,
             project,
             worktrees_dir,
@@ -222,6 +230,45 @@ impl RelayRuntime {
             &delivery,
             OffsetDateTime::now_utc(),
         ))?;
+        apply_events(&mut task, &events)?;
+        let projection = TaskProjection::from_task(&task);
+        {
+            let mut repository = self.database.task_repository();
+            repository.append_events(&events)?;
+            repository.save_snapshot(&projection)?;
+        }
+        self.list_task_projections()
+    }
+
+    fn attach_worktree_preview_for_task(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
+        let mut task = self
+            .database
+            .task_repository()
+            .load_task(task_id)?
+            .context("task not found")?;
+        let worktree_path = task
+            .worktree
+            .as_ref()
+            .map(|worktree| PathBuf::from(&worktree.path))
+            .context("task has no worktree")?;
+        let uri = worktree_file_uri(&worktree_path)?;
+        if task
+            .preview_targets
+            .iter()
+            .any(|target| target.label == "Worktree" && target.uri == uri)
+        {
+            return self.list_task_projections();
+        }
+
+        let command = self.preview_provider.attach_target(
+            task.id,
+            PreviewRequest {
+                label: "Worktree".to_string(),
+                uri,
+            },
+            OffsetDateTime::now_utc(),
+        )?;
+        let events = task.handle(command)?;
         apply_events(&mut task, &events)?;
         let projection = TaskProjection::from_task(&task);
         {
@@ -493,6 +540,10 @@ impl TaskDataSource for RelayRuntime {
         self.deliver_review_for_task(task_id)
     }
 
+    fn attach_worktree_preview(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
+        self.attach_worktree_preview_for_task(task_id)
+    }
+
     fn poll_runtime(&mut self) -> Result<bool> {
         self.drain_terminal_events()
     }
@@ -553,6 +604,15 @@ fn load_or_open_project(
     )?;
 
     Ok(project)
+}
+
+fn worktree_file_uri(path: &Path) -> Result<String> {
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve worktree path: {}", path.display()))?;
+    let url = Url::from_directory_path(&canonical)
+        .map_err(|()| anyhow!("failed to convert worktree path to file URI"))?;
+    Ok(url.to_string())
 }
 
 fn load_terminal_task_ids(
@@ -1072,6 +1132,89 @@ mod tests {
             error.to_string().contains("task has no active agent"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn attach_worktree_preview_should_persist_file_target() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Preview worktree")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+
+        let tasks = runtime
+            .attach_worktree_preview_for_task(task_id)
+            .expect("preview should attach");
+        let task = tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .expect("task should remain listed");
+        let target = task
+            .preview_targets
+            .first()
+            .expect("preview target should exist");
+
+        assert_eq!(task.preview_target_count, 1);
+        assert_eq!(target.label, "Worktree");
+        assert!(target.uri.starts_with("file://"));
+    }
+
+    #[test]
+    fn attach_worktree_preview_should_not_duplicate_existing_target() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Preview once")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+        runtime
+            .attach_worktree_preview_for_task(task_id)
+            .expect("preview should attach");
+
+        let tasks = runtime
+            .attach_worktree_preview_for_task(task_id)
+            .expect("duplicate preview attach should be ignored");
+        let task = tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .expect("task should remain listed");
+
+        assert_eq!(task.preview_target_count, 1);
     }
 
     #[cfg(windows)]
