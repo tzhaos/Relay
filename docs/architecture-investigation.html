@@ -1,0 +1,1969 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Relay 架构调研：Orca 工作流 + Zed/GPUI 底座</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f4ee;
+      --paper: #fffdf8;
+      --ink: #1b1d1f;
+      --muted: #676b70;
+      --line: #d9d3c7;
+      --line-strong: #a89f90;
+      --accent: #0f766e;
+      --accent-dark: #115e59;
+      --red: #a33a2d;
+      --blue: #315f96;
+      --green: #52763d;
+      --gold: #8b6f24;
+      --code-bg: #191b1f;
+      --code-ink: #e9edf2;
+      --shadow: 0 16px 48px rgba(37, 31, 23, 0.12);
+      --radius: 8px;
+      font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(90deg, rgba(15, 118, 110, 0.06), transparent 34%),
+        linear-gradient(180deg, #fbfaf6 0%, var(--bg) 52%, #eeebe4 100%);
+      color: var(--ink);
+      line-height: 1.58;
+      letter-spacing: 0;
+    }
+
+    a {
+      color: var(--accent-dark);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(15, 118, 110, 0.28);
+    }
+
+    a:hover {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      border-right: 1px solid var(--line);
+      background: rgba(255, 253, 248, 0.84);
+      backdrop-filter: blur(14px);
+      padding: 26px 22px;
+      overflow: auto;
+    }
+
+    .brand {
+      display: grid;
+      gap: 8px;
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 18px;
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--ink);
+      color: #fffdf8;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .brand strong {
+      font-size: 15px;
+    }
+
+    .brand span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    nav {
+      display: grid;
+      gap: 4px;
+    }
+
+    nav a {
+      border: 0;
+      color: #3e4247;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    nav a:hover,
+    nav a.active {
+      background: rgba(15, 118, 110, 0.1);
+      color: var(--accent-dark);
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    .hero {
+      min-height: 72vh;
+      display: grid;
+      align-items: end;
+      padding: 72px clamp(28px, 6vw, 92px) 52px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(120deg, rgba(255, 253, 248, 0.96), rgba(255, 253, 248, 0.62)),
+        repeating-linear-gradient(90deg, transparent 0 55px, rgba(27, 29, 31, 0.035) 55px 56px),
+        repeating-linear-gradient(0deg, transparent 0 55px, rgba(27, 29, 31, 0.03) 55px 56px);
+    }
+
+    .hero-inner {
+      max-width: 1060px;
+      display: grid;
+      gap: 26px;
+    }
+
+    .eyebrow {
+      color: var(--accent-dark);
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 930px;
+      font-size: clamp(42px, 7vw, 86px);
+      font-weight: 830;
+    }
+
+    .hero p {
+      max-width: 760px;
+      margin: 0;
+      color: #464b50;
+      font-size: 20px;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 253, 248, 0.72);
+      color: #34383d;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    section {
+      padding: 56px clamp(28px, 6vw, 92px);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section-grid {
+      max-width: 1180px;
+      display: grid;
+      grid-template-columns: minmax(220px, 0.68fr) minmax(0, 1.6fr);
+      gap: clamp(28px, 5vw, 72px);
+      align-items: start;
+    }
+
+    .section-kicker {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 12px;
+    }
+
+    h2 {
+      font-size: clamp(28px, 4vw, 46px);
+    }
+
+    h3 {
+      font-size: 20px;
+      margin-bottom: 10px;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    .lead {
+      color: #464b50;
+      font-size: 18px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 20px;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      padding: 14px 0 14px 18px;
+      color: #34383d;
+      background: linear-gradient(90deg, rgba(15, 118, 110, 0.08), transparent);
+    }
+
+    .decision {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      padding: 20px;
+    }
+
+    .decision-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    .status {
+      color: #fff;
+      background: var(--accent-dark);
+      border-radius: 5px;
+      padding: 3px 8px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .status.warn {
+      background: var(--gold);
+    }
+
+    .status.risk {
+      background: var(--red);
+    }
+
+    .evidence-grid,
+    .module-grid,
+    .roadmap-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .evidence,
+    .module,
+    .roadmap {
+      border: 1px solid var(--line);
+      background: rgba(255, 253, 248, 0.72);
+      border-radius: var(--radius);
+      padding: 16px;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .evidence:hover,
+    .module:hover,
+    .roadmap:hover {
+      transform: translateY(-2px);
+      border-color: var(--line-strong);
+      background: #fffdf8;
+    }
+
+    .evidence strong,
+    .module strong,
+    .roadmap strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .path {
+      margin-top: 10px;
+      color: var(--muted);
+      font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .diagram {
+      border: 1px solid var(--line);
+      background: #fffdf8;
+      border-radius: var(--radius);
+      padding: 18px;
+      overflow-x: auto;
+    }
+
+    .lane {
+      min-width: 720px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .lane > div {
+      min-height: 92px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 12px;
+      background: #fbfaf6;
+      position: relative;
+    }
+
+    .lane > div::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -10px;
+      width: 10px;
+      height: 1px;
+      background: var(--line-strong);
+    }
+
+    .lane > div:last-child::after {
+      display: none;
+    }
+
+    .lane b {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--ink);
+    }
+
+    .lane span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    pre {
+      margin: 0;
+      overflow-x: auto;
+      padding: 18px;
+      border-radius: var(--radius);
+      background: var(--code-bg);
+      color: var(--code-ink);
+      font: 13px/1.55 "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    code {
+      font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      background: rgba(27, 29, 31, 0.07);
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+
+    pre code {
+      background: transparent;
+      padding: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    th,
+    td {
+      text-align: left;
+      vertical-align: top;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+
+    th {
+      background: #eee8dc;
+      color: #333;
+      font-weight: 760;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    li {
+      margin: 7px 0;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      padding: 14px 16px;
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 750;
+    }
+
+    details[open] summary {
+      margin-bottom: 12px;
+    }
+
+    .footer {
+      padding-bottom: 80px;
+    }
+
+    .print-note {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 980px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        position: relative;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      nav {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .section-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .evidence-grid,
+      .module-grid,
+      .roadmap-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media print {
+      aside {
+        display: none;
+      }
+
+      .shell {
+        display: block;
+      }
+
+      .hero {
+        min-height: 0;
+      }
+
+      section {
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand">
+        <div class="brand-mark">R</div>
+        <strong>Relay RFC-00</strong>
+        <span>Orca 工作流调研 + Zed/GPUI 架构借鉴</span>
+      </div>
+      <nav aria-label="文档目录">
+        <a href="#summary" class="active">结论摘要</a>
+        <a href="#orca">Orca 调研</a>
+        <a href="#zed">Zed/GPUI 调研</a>
+        <a href="#principles">架构原则</a>
+        <a href="#ui-positioning">UI 产品定位</a>
+        <a href="#crates">Rust 库策略</a>
+        <a href="#target">目标架构</a>
+        <a href="#model">核心模型</a>
+        <a href="#engineering">工程蓝图</a>
+        <a href="#mvp">MVP 路线</a>
+        <a href="#development-plan">开发计划</a>
+        <a href="#risks">风险与许可</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <div class="hero-inner">
+          <div class="eyebrow">Architecture Investigation / 2026-06-18</div>
+          <h1>Relay 应该是任务优先的 Rust 原生 AI 开发工作台</h1>
+          <p>
+            Orca 证明了多 Agent + 多 worktree + 原生 CLI 的产品方向；Zed 证明了 Rust + GPUI + Entity/Task 模型可以支撑高性能编辑器级体验。
+            Relay 的机会点，是把两者合并成一个为并行 Agent 开发原生设计的系统。
+          </p>
+          <div class="meta-row">
+            <span class="tag">参考仓库：D:\Workspace\orca</span>
+            <span class="tag">参考仓库：D:\Workspace\zed</span>
+            <span class="tag">目标项目：D:\Workspace\Relay</span>
+            <span class="tag">Step 1 已开始落地</span>
+          </div>
+        </div>
+      </header>
+
+      <section id="summary">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">Executive Summary</div>
+            <h2>一句话结论</h2>
+          </div>
+          <div class="stack">
+            <p class="lead">
+              Relay 不应该先做“编辑器”，而应该先做一个 <strong>Task-native runtime</strong>：
+              每个任务拥有 worktree、terminal session、agent status、diff review、preview context 和持久化历史。
+            </p>
+            <div class="decision">
+              <div class="decision-title">
+                <h3>建议的第一原则</h3>
+                <span class="status">Adopt</span>
+              </div>
+              <p>
+                UI 风格遵循 Zed 的原生、克制、高密度设计；布局和功能对标 Orca 的三栏工作流。
+                底层不复制 Electron + Zustand 的状态拼装方式。
+                Rust 层应该有明确的一等实体：<code>Task</code>、<code>Workspace</code>、<code>Worktree</code>、
+                <code>AgentSession</code>、<code>TerminalSession</code>、<code>DiffReview</code>。
+              </p>
+            </div>
+            <div class="decision">
+              <div class="decision-title">
+                <h3>最小可行产品</h3>
+                <span class="status warn">Narrow</span>
+              </div>
+              <p>
+                第一阶段只做五件事：打开 repo、创建 task worktree、在 worktree 中启动原生 CLI Agent、实时显示 changed files/diff、在任务列表展示 working/waiting/done。
+                不要在第一阶段做完整 LSP、插件市场、浏览器自动化、PR 面板和移动端。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="orca">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">Source Study: Orca</div>
+            <h2>Orca 值得借鉴的是工作流闭环</h2>
+          </div>
+          <div class="stack">
+            <p class="lead">
+              Orca 的核心价值不是编辑器能力，而是把 Agent、worktree、terminal、diff、browser、GitHub/Linear 放到一个任务面板里。
+              它的实现当前是 Electron + TypeScript + React + Zustand + IPC。
+            </p>
+
+            <div class="evidence-grid">
+              <div class="evidence">
+                <strong>Worktree 是主组织单位</strong>
+                <p>Orca README 明确强调 “each in its own worktree”。类型层面，<code>Worktree</code> 绑定 repo、path、branch、linked issue/PR、diffComments、workspaceStatus 等。</p>
+                <div class="path">D:\Workspace\orca\README.md<br />D:\Workspace\orca\src\shared\types.ts:433</div>
+              </div>
+              <div class="evidence">
+                <strong>Terminal 是原生 CLI 承载层</strong>
+                <p>Orca 依赖 <code>node-pty</code>、xterm beta 和 WebGL addon，main 侧集中处理 spawn、write、resize、kill、session list、buffer snapshot。</p>
+                <div class="path">D:\Workspace\orca\package.json<br />D:\Workspace\orca\src\main\ipc\pty.ts</div>
+              </div>
+              <div class="evidence">
+                <strong>Agent 状态来自 hook，而不是猜终端标题</strong>
+                <p>标准状态只有 <code>working</code>、<code>blocked</code>、<code>waiting</code>、<code>done</code>。状态记录绑定 paneKey、worktreeId、tabId、providerSession。</p>
+                <div class="path">D:\Workspace\orca\src\shared\agent-status-types.ts:9<br />D:\Workspace\orca\src\shared\agent-status-types.ts:72</div>
+              </div>
+              <div class="evidence">
+                <strong>Browser Design Mode 有安全预算</strong>
+                <p>Design Mode 的 payload 在 main 侧再次过滤 URL、属性、secret、长度预算，说明 UI 选取上下文是安全边界，不只是前端功能。</p>
+                <div class="path">D:\Workspace\orca\src\main\browser\browser-grab-payload.ts</div>
+              </div>
+              <div class="evidence">
+                <strong>Diff 评论是 worktree metadata</strong>
+                <p>Diff comments 以 worktree 为单位做 optimistic update 和串行持久化，天然适合 review-fix 循环。</p>
+                <div class="path">D:\Workspace\orca\src\renderer\src\store\slices\diffComments.ts</div>
+              </div>
+              <div class="evidence">
+                <strong>Agent 启动是配置化的 TUI 适配</strong>
+                <p>Claude、Codex、Gemini、OpenCode 等用统一配置描述 detectCmd、launchCmd、expectedProcess、promptInjectionMode。</p>
+                <div class="path">D:\Workspace\orca\src\shared\tui-agent-config.ts</div>
+              </div>
+            </div>
+
+            <div class="callout">
+              <strong>Relay 的改进点：</strong>
+              Orca 的状态分散在 worktree store、terminal store、agent-status store、diff comments、browser store 中。
+              Relay 可以在 Rust core 中把这些收束到 <code>Task</code> 聚合根，UI 只订阅聚合后的 projection。
+            </div>
+
+            <details>
+              <summary>Orca 对 Relay 的可借鉴清单</summary>
+              <ul>
+                <li>保持 CLI 原生：不要吞掉 slash command、快捷键、TUI 输出和 shell 行为。</li>
+                <li>Worktree 创建、删除、归档、恢复必须有强安全校验，尤其要保护未提交改动和本地分支。</li>
+                <li>Agent 状态要走显式 adapter/hook/OSC 协议，终端标题只能作为弱 fallback。</li>
+                <li>Diff 评论、browser selection、PR review 都应挂在 task/worktree，而不是独立漂浮。</li>
+                <li>远程能力需要从第一天设计抽象，但可以在 MVP 后实现。</li>
+              </ul>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section id="zed">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">Source Study: Zed / GPUI</div>
+            <h2>Zed 值得借鉴的是 Rust 应用的组织方式</h2>
+          </div>
+          <div class="stack">
+            <p class="lead">
+              Zed 的仓库是一个大型 Rust workspace，UI、编辑器、终端、项目、worktree、agent、数据库、远程连接都拆成 crate。
+              GPUI 提供 Entity、Render、Task、AppContext 和平台事件循环，适合做长期运行的原生工作台。
+            </p>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Zed 模块</th>
+                  <th>观察</th>
+                  <th>Relay 映射</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>crates/gpui</code></td>
+                  <td>混合 immediate/retained、GPU 加速、Entity 所有权在 App 中，状态通过 context update/read。</td>
+                  <td><code>relay_ui</code> 使用 GPUI；业务实体由 app context 持有。</td>
+                </tr>
+                <tr>
+                  <td><code>crates/workspace</code></td>
+                  <td>Workspace 是窗口级容器，管理 pane、dock、item、panel、terminal provider。</td>
+                  <td><code>relay_workspace_ui</code> 管三栏布局、面板、焦点、命令。</td>
+                </tr>
+                <tr>
+                  <td><code>crates/project</code></td>
+                  <td>Project 聚合 worktree、buffer、git、LSP、terminal、agent server store。</td>
+                  <td><code>relay_project</code> 聚合 repo、task、worktree、git status。</td>
+                </tr>
+                <tr>
+                  <td><code>crates/worktree</code></td>
+                  <td>Worktree 支持 Local/Remote，维护 snapshot、scan queue、FS watcher、git repository summary。</td>
+                  <td><code>relay_worktree</code> 负责文件树、Git worktree path、watch、changed files。</td>
+                </tr>
+                <tr>
+                  <td><code>crates/terminal</code></td>
+                  <td>基于 alacritty/vte/portable-pty 的高性能终端模型，terminal_view 负责渲染。</td>
+                  <td><code>relay_terminal</code> 负责 PTY runtime；UI 渲染可先复用成熟终端组件或逐步自研。</td>
+                </tr>
+                <tr>
+                  <td><code>crates/agent</code></td>
+                  <td>ThreadStore、LanguageModels、ACP thread、skills、project context 通过 Entity/Task 持久化。</td>
+                  <td><code>relay_agent_runtime</code> 不直接做聊天模型，先做 CLI agent session 管理。</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="evidence-grid">
+              <div class="evidence">
+                <strong>GPUI 的状态模型</strong>
+                <p>GPUI README 描述 Entity、View、Element 三层；App 持有 entity，handle 类似 Rc，但读写必须经 App/Context。</p>
+                <div class="path">D:\Workspace\zed\crates\gpui\README.md<br />D:\Workspace\zed\crates\gpui\src\_ownership_and_data_flow.rs</div>
+              </div>
+              <div class="evidence">
+                <strong>Zed 的 Project 是语义聚合根</strong>
+                <p><code>Project</code> 负责 tasks、LSP、collab、worktree state 同步，内部持有 WorktreeStore、GitStore、TaskStore、Terminals。</p>
+                <div class="path">D:\Workspace\zed\crates\project\src\project.rs:213</div>
+              </div>
+              <div class="evidence">
+                <strong>Worktree 有 Local/Remote 双态</strong>
+                <p><code>Worktree</code> enum 包含 LocalWorktree 和 RemoteWorktree，snapshot 和 scan 机制天然支持本地/远程抽象。</p>
+                <div class="path">D:\Workspace\zed\crates\worktree\src\worktree.rs:94</div>
+              </div>
+              <div class="evidence">
+                <strong>终端和任务可通过 provider 解耦</strong>
+                <p>Workspace 定义 <code>TerminalProvider</code> trait，Project 提供 create_terminal_task，终端创建和 UI 容器之间有边界。</p>
+                <div class="path">D:\Workspace\zed\crates\workspace\src\workspace.rs<br />D:\Workspace\zed\crates\project\src\terminals.rs</div>
+              </div>
+            </div>
+
+            <div class="callout">
+              <strong>Relay 的取舍：</strong>
+              不要一开始复制 Zed 的完整 editor/project/LSP 体系。
+              先借用它的 crate 边界、Entity/Task 数据流和平台能力，把 Agent 工作流跑通。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="principles">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">Architecture Principles</div>
+            <h2>Relay 的架构原则</h2>
+          </div>
+          <div class="module-grid">
+            <div class="module">
+              <strong>1. Task 是一等实体</strong>
+              <p>Task 不是 UI 行，也不是终端 tab。Task 是一个可恢复、可审查、可提交、可归档的工作单元。</p>
+            </div>
+            <div class="module">
+              <strong>2. Terminal 保持原生</strong>
+              <p>CLI agent 的交互面由 PTY 真实承载。Adapter 只能监听、注入、标注，不重写 CLI 协议。</p>
+            </div>
+            <div class="module">
+              <strong>3. Worktree 隔离任务</strong>
+              <p>每个 task 默认创建独立 Git worktree。所有 diff、preview、agent session 都以 task/worktree 为边界。</p>
+            </div>
+            <div class="module">
+              <strong>4. UI 读 projection，不拼底层状态</strong>
+              <p>Rust core 产出 TaskProjection。GPUI 只负责展示和命令触发，避免 React/Zustand 式跨 store 合成。</p>
+            </div>
+            <div class="module">
+              <strong>5. Local/Remote 从接口层预留</strong>
+              <p>MVP 只做本地，但 WorktreeProvider、PtyProvider、FsProvider 先设计成本地/SSH 可替换。</p>
+            </div>
+            <div class="module">
+              <strong>6. 安全边界前置</strong>
+              <p>diff 评论、browser grab、agent prompt 注入、worktree 删除都要有预算、校验、审计日志。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="ui-positioning">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">UI Product Direction</div>
+            <h2>Zed 风格，Orca 工作流</h2>
+          </div>
+          <div class="stack">
+            <p class="lead">
+              Relay 本质上是一个 Rust 高性能版 Orca：产品工作流、信息架构和功能优先级对标 Orca；
+              但视觉语言、交互质感和性能预期应对标 Zed，因为 GPUI 已经证明这种原生界面风格可以被 Rust 实现出来。
+            </p>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>定位公式</h3>
+                <span class="status">Product</span>
+              </div>
+              <p>
+                <strong>Zed-like surface, Orca-like workflow, Relay-native runtime.</strong>
+                也就是说，看起来和操作质感接近 Zed，功能布局和任务闭环接近 Orca，底层运行时则围绕 Relay 自己的一等 Task 模型重新设计。
+              </p>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>维度</th>
+                  <th>对标对象</th>
+                  <th>Relay 决策</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>视觉风格</td>
+                  <td>Zed</td>
+                  <td>克制、原生、高密度、低 chrome；避免 Electron SaaS 感、重卡片、重阴影和花哨渐变。</td>
+                </tr>
+                <tr>
+                  <td>交互质感</td>
+                  <td>Zed / GPUI</td>
+                  <td>键盘优先、快速响应、稳定焦点、轻量命令面板、面板切换无卡顿。</td>
+                </tr>
+                <tr>
+                  <td>主布局</td>
+                  <td>Orca</td>
+                  <td>左侧 task/worktree/agent 状态，中间 terminal + preview，右侧 file tree / editor / diff / review。</td>
+                </tr>
+                <tr>
+                  <td>功能闭环</td>
+                  <td>Orca</td>
+                  <td>多 Agent、多 worktree、原生 CLI、diff 评论、browser context、GitHub/Linear/PR 工作流。</td>
+                </tr>
+                <tr>
+                  <td>底层架构</td>
+                  <td>Zed 的 Rust/GPUI 方法论</td>
+                  <td>Entity + Task + provider trait；UI 订阅 projection，core 负责状态机和生命周期。</td>
+                </tr>
+                <tr>
+                  <td>产品差异</td>
+                  <td>Relay 自己</td>
+                  <td>Task 是一等实体，Agent session、worktree、terminal、diff、preview 全部归属 Task。</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout">
+              <strong>设计边界：</strong>
+              不要做 Zed 的完整替代品，也不要做 Orca 的像素级复刻。
+              Relay 应该像 Zed 一样快、稳、原生；像 Orca 一样懂 Agent 并行开发；但在任务模型和运行时上形成自己的架构。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="crates">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">Rust Ecosystem Strategy</div>
+            <h2>充分使用小而精的 Rust 库</h2>
+          </div>
+          <div class="stack">
+            <p class="lead">
+              Relay 的核心竞争力不是重复实现成熟基础设施，而是把优秀 Rust crate 组合成稳定的 Agent-native 工作流。
+              除非某个能力直接决定产品差异化，否则优先采用已有库，并把精力放在任务编排、状态模型、UI 体验和安全边界上。
+            </p>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>选型原则</h3>
+                <span class="status">Adopt</span>
+              </div>
+              <ul>
+                <li>优先选择单一职责、维护活跃、API 清晰、依赖可控的 crate。</li>
+                <li>核心路径上避免庞大框架式依赖，除非它解决的是跨平台硬问题。</li>
+                <li>对 Git、PTY、diff、watcher、SQLite、搜索、文本结构这类基础能力，默认不从零实现。</li>
+                <li>把第三方库包在 Relay 自己的 provider/trait 后面，后续可替换，不让库 API 泄漏到业务模型。</li>
+                <li>对安全敏感路径增加输入预算、路径校验、回滚和审计日志，而不是盲目信任库的默认行为。</li>
+              </ul>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>能力域</th>
+                  <th>优先借力方向</th>
+                  <th>Relay 边界</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>PTY / Terminal</td>
+                  <td><code>portable-pty</code>、<code>alacritty_terminal</code>、<code>vte</code> 一类成熟终端基础库。</td>
+                  <td>封装为 <code>PtyProvider</code> 与 <code>TerminalSession</code>，UI 不直接依赖底层 PTY API。</td>
+                </tr>
+                <tr>
+                  <td>Git</td>
+                  <td>MVP 优先调用 <code>git</code> CLI；结构化解析可逐步引入 <code>gix</code> 或轻量 parser。</td>
+                  <td>封装为 <code>GitProvider</code>，所有 destructive 操作经过 safety gate。</td>
+                </tr>
+                <tr>
+                  <td>文件监听</td>
+                  <td><code>notify</code>、<code>ignore</code>、<code>walkdir</code> 这类文件系统生态。</td>
+                  <td>封装为 <code>FsWatcher</code>，输出去抖后的 worktree change event。</td>
+                </tr>
+                <tr>
+                  <td>搜索</td>
+                  <td><code>ignore</code> + regex，或直接集成 ripgrep 思路；模糊搜索可参考 <code>nucleo</code>。</td>
+                  <td>封装为 <code>SearchService</code>，先服务 task files、changed files、quick open。</td>
+                </tr>
+                <tr>
+                  <td>Diff</td>
+                  <td><code>imara-diff</code>、<code>similar</code> 等成熟 diff 算法库。</td>
+                  <td>封装为 <code>DiffEngine</code>，业务层只消费 file/hunk/line projection。</td>
+                </tr>
+                <tr>
+                  <td>文本结构</td>
+                  <td><code>ropey</code>、Zed 自有 rope 思路、tree-sitter 生态。</td>
+                  <td>编辑器能力后置；MVP 只需要稳定读取、预览和 diff。</td>
+                </tr>
+                <tr>
+                  <td>持久化</td>
+                  <td><code>rusqlite</code>、<code>sqlx</code>、<code>redb</code> 中择一，优先简单可靠。</td>
+                  <td>封装为 repository 层，TaskEvent append-only，projection 可重建。</td>
+                </tr>
+                <tr>
+                  <td>异步与通道</td>
+                  <td><code>tokio</code> 或 GPUI 集成 executor；通道使用 <code>async-channel</code> / <code>flume</code>。</td>
+                  <td>后台任务必须可取消、可追踪、可回收，避免悬挂进程和泄漏订阅。</td>
+                </tr>
+                <tr>
+                  <td>配置与序列化</td>
+                  <td><code>serde</code>、<code>toml</code>、<code>schemars</code>、<code>figment</code> 等。</td>
+                  <td>配置 schema 版本化，用户配置和项目配置分层合并。</td>
+                </tr>
+                <tr>
+                  <td>诊断与性能</td>
+                  <td><code>tracing</code>、<code>tracing-subscriber</code>、<code>minidump</code>、轻量 profiler。</td>
+                  <td>所有 task/worktree/pty 生命周期都产生日志事件，便于复盘 Agent 运行。</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="callout">
+              <strong>设计约束：</strong>
+              “用库”不等于把第三方抽象扩散到整个项目。Relay 应该在 core 里定义自己的 trait 和事件模型，
+              第三方 crate 只存在于 provider 实现层。这样既能快速启动，也能在性能、许可或跨平台问题出现时替换实现。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="target">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">Target Architecture</div>
+            <h2>推荐目标架构</h2>
+          </div>
+          <div class="stack">
+            <div class="diagram" aria-label="Relay 架构层级">
+              <div class="lane">
+                <div>
+                  <b>GPUI UI</b>
+                  <span>Task list, terminal pane, diff/editor, preview, command palette</span>
+                </div>
+                <div>
+                  <b>Application State</b>
+                  <span>Entity&lt;AppState&gt;, TaskProjection, subscriptions, commands</span>
+                </div>
+                <div>
+                  <b>Domain Core</b>
+                  <span>Task, Worktree, AgentSession, TerminalSession, DiffReview</span>
+                </div>
+                <div>
+                  <b>Providers</b>
+                  <span>Git, PTY, FS watch, process inspect, browser, remote</span>
+                </div>
+                <div>
+                  <b>Persistence</b>
+                  <span>SQLite, session log, terminal snapshot, settings, audit events</span>
+                </div>
+              </div>
+            </div>
+
+            <pre><code>Relay workspace crates
+├─ relay_app          # binary, bootstrap, window creation, global services
+├─ relay_ui           # GPUI views, panes, command palette, theme
+├─ relay_core         # Task aggregate, state machine, domain events
+├─ relay_project      # repo registry, project/workspace metadata
+├─ relay_worktree     # git worktree lifecycle, FS watch, changed files
+├─ relay_terminal     # PTY provider, terminal session, scrollback snapshots
+├─ relay_agent        # CLI agent adapters, status hooks, prompt delivery
+├─ relay_diff         # diff engine, line comments, review delivery
+├─ relay_persistence  # SQLite schema, migrations, settings
+└─ relay_infra        # tracing, config, platform helpers</code></pre>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>为什么不从完整编辑器开始</h3>
+                <span class="status">Decision</span>
+              </div>
+              <p>
+                Zed 已经证明完整编辑器架构会迅速扩展到数百个 crate。Relay 的差异化不是再造 LSP/editor，
+                而是让多 Agent 并行开发变成稳定、可控、可审查的工作流。第一版可以嵌入轻量编辑/预览能力，
+                后续再逐步补 editor、LSP、symbol、semantic index。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="model">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">Domain Model</div>
+            <h2>核心对象模型</h2>
+          </div>
+          <div class="stack">
+            <pre><code>Task
+├─ id: TaskId
+├─ title: String
+├─ status: Working | Waiting | Done | Blocked | Failed | Archived
+├─ project_id: ProjectId
+├─ worktree_id: WorktreeId
+├─ agent_session_id: Option&lt;AgentSessionId&gt;
+├─ terminal_session_id: Option&lt;TerminalSessionId&gt;
+├─ changed_files: Vec&lt;ChangedFile&gt;
+├─ diff_review: DiffReview
+├─ preview_targets: Vec&lt;PreviewTarget&gt;
+├─ source: Manual | GitHubIssue | LinearIssue | CLI | Automation
+├─ created_at / updated_at / last_activity_at
+└─ events: append-only TaskEvent log</code></pre>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>实体</th>
+                  <th>职责</th>
+                  <th>不应该做的事</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>Task</code></td>
+                  <td>聚合状态、生命周期、事件、UI projection。</td>
+                  <td>直接读写文件、直接控制 PTY 字节流。</td>
+                </tr>
+                <tr>
+                  <td><code>Worktree</code></td>
+                  <td>Git worktree path、branch、base ref、dirty files、safe removal。</td>
+                  <td>保存 Agent 对话语义。</td>
+                </tr>
+                <tr>
+                  <td><code>AgentSession</code></td>
+                  <td>CLI 类型、启动命令、status adapter、provider session、prompt delivery。</td>
+                  <td>假装所有 agent 都有同一种协议。</td>
+                </tr>
+                <tr>
+                  <td><code>TerminalSession</code></td>
+                  <td>PTY lifecycle、scrollback、geometry、foreground process、input/output stream。</td>
+                  <td>解释 Agent 的业务状态，除非 adapter 显式声明。</td>
+                </tr>
+                <tr>
+                  <td><code>DiffReview</code></td>
+                  <td>changed file、hunk、line comment、delivery snapshot、sent state。</td>
+                  <td>直接拼接未校验 prompt。</td>
+                </tr>
+                <tr>
+                  <td><code>PreviewTarget</code></td>
+                  <td>localhost/file/browser context、screenshot、DOM selection payload。</td>
+                  <td>绕过安全预算把完整页面秘密塞进 Agent。</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>建议的状态机</h3>
+                <span class="status">Core</span>
+              </div>
+              <pre><code>Draft
+  -> CreatingWorktree
+  -> StartingAgent
+  -> Working
+  -> WaitingForUser
+  -> Working
+  -> Done
+  -> Reviewing
+  -> Fixing
+  -> ReadyToCommit
+  -> Archived
+
+Failure branches:
+  CreatingWorktree -> Failed
+  StartingAgent    -> Failed
+  Working          -> Blocked | Failed
+  Reviewing        -> Fixing | ReadyToCommit</code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="engineering">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">Engineering Blueprint</div>
+            <h2>工程蓝图与模块边界</h2>
+          </div>
+          <div class="stack">
+            <p class="lead">
+              Relay 的工程结构应该先稳定核心域，再长出 UI 和集成能力。
+              每个模块只暴露 Relay 自己的 trait、事件和 projection，第三方库、系统命令和平台差异都收敛在 provider 实现层。
+            </p>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>推荐仓库结构</h3>
+                <span class="status">Layout</span>
+              </div>
+              <pre><code>Relay
+├─ Cargo.toml
+├─ crates
+│  ├─ relay_app          # binary: bootstrap, windows, global services
+│  ├─ relay_ui           # GPUI views: task list, panes, command palette
+│  ├─ relay_core         # Task aggregate, state machine, events
+│  ├─ relay_project      # repo/project registry, workspace ownership
+│  ├─ relay_worktree     # git worktree lifecycle, file watching
+│  ├─ relay_terminal     # PTY provider, terminal sessions, snapshots
+│  ├─ relay_agent        # CLI agent adapters, status protocol, prompt delivery
+│  ├─ relay_diff         # diff generation, review comments, delivery
+│  ├─ relay_preview      # browser/localhost/file preview abstraction
+│  ├─ relay_persistence  # SQLite schema, migrations, settings
+│  └─ relay_infra        # tracing, config, platform helpers
+├─ docs
+└─ xtask                       # dev scripts, schema generation, diagnostics</code></pre>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>模块</th>
+                  <th>Public API</th>
+                  <th>内部可替换实现</th>
+                  <th>第一阶段职责</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>core</code></td>
+                  <td><code>Task</code>, <code>TaskEvent</code>, <code>TaskProjection</code>, <code>TaskStatus</code></td>
+                  <td>纯 Rust 状态机，无外部 IO</td>
+                  <td>定义任务生命周期和聚合投影。</td>
+                </tr>
+                <tr>
+                  <td><code>worktree</code></td>
+                  <td><code>WorktreeProvider</code>, <code>WorktreeSnapshot</code>, <code>ChangedFile</code></td>
+                  <td>git CLI, notify, ignore</td>
+                  <td>创建/删除 worktree，读取 changed files。</td>
+                </tr>
+                <tr>
+                  <td><code>terminal</code></td>
+                  <td><code>PtyProvider</code>, <code>TerminalSession</code>, <code>TerminalEvent</code></td>
+                  <td>portable-pty/alacritty/vte 组合</td>
+                  <td>启动 shell/agent，发送输入，接收输出。</td>
+                </tr>
+                <tr>
+                  <td><code>agent</code></td>
+                  <td><code>AgentAdapter</code>, <code>AgentLaunchPlan</code>, <code>AgentStatus</code></td>
+                  <td>Claude/Codex/Gemini adapter</td>
+                  <td>CLI 检测、启动命令、状态解析。</td>
+                </tr>
+                <tr>
+                  <td><code>diff</code></td>
+                  <td><code>DiffEngine</code>, <code>DiffReview</code>, <code>ReviewComment</code></td>
+                  <td>git diff, imara-diff/similar</td>
+                  <td>展示文件级 diff 和行评论。</td>
+                </tr>
+                <tr>
+                  <td><code>persistence</code></td>
+                  <td><code>TaskRepository</code>, <code>SettingsRepository</code>, migrations</td>
+                  <td>SQLite/rusqlite 或 redb</td>
+                  <td>保存 task、session、settings、event log。</td>
+                </tr>
+                <tr>
+                  <td><code>ui</code></td>
+                  <td>GPUI views, commands, panels</td>
+                  <td>GPUI component tree</td>
+                  <td>Zed 风格三栏工作台。</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="diagram" aria-label="Relay 事件流">
+              <div class="lane">
+                <div>
+                  <b>User Command</b>
+                  <span>create task, launch agent, add review note</span>
+                </div>
+                <div>
+                  <b>Core Command</b>
+                  <span>validate intent, produce domain transition</span>
+                </div>
+                <div>
+                  <b>Provider IO</b>
+                  <span>git, pty, fs watch, browser, persistence</span>
+                </div>
+                <div>
+                  <b>Task Event</b>
+                  <span>append log, update aggregate state</span>
+                </div>
+                <div>
+                  <b>UI Projection</b>
+                  <span>task rows, badges, diff, terminal focus</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>核心数据流</h3>
+                <span class="status">Flow</span>
+              </div>
+              <pre><code>UI Command
+  -> ApplicationService
+  -> TaskService
+  -> Provider command
+  -> Provider event
+  -> TaskEvent append
+  -> Task aggregate update
+  -> TaskProjection notify
+  -> GPUI render</code></pre>
+            </div>
+
+            <details>
+              <summary>第一批关键 trait 草案</summary>
+              <pre><code>trait WorktreeProvider {
+    fn create_worktree(&self, request: CreateWorktreeRequest) -> Task&lt;Result&lt;WorktreeSnapshot&gt;&gt;;
+    fn remove_worktree(&self, request: RemoveWorktreeRequest) -> Task&lt;Result&lt;RemovalReport&gt;&gt;;
+    fn changed_files(&self, worktree: WorktreeId) -> Task&lt;Result&lt;Vec&lt;ChangedFile&gt;&gt;&gt;;
+}
+
+trait PtyProvider {
+    fn spawn(&self, request: PtySpawnRequest) -> Task&lt;Result&lt;TerminalSessionId&gt;&gt;;
+    fn write(&self, session: TerminalSessionId, bytes: Vec&lt;u8&gt;) -> Result&lt;()&gt;;
+    fn resize(&self, session: TerminalSessionId, cols: u16, rows: u16) -> Result&lt;()&gt;;
+    fn kill(&self, session: TerminalSessionId) -> Task&lt;Result&lt;ExitStatus&gt;&gt;;
+}
+
+trait AgentAdapter {
+    fn detect(&self, env: &RuntimeEnvironment) -> Task&lt;Result&lt;AgentAvailability&gt;&gt;;
+    fn launch_plan(&self, request: AgentLaunchRequest) -> Result&lt;AgentLaunchPlan&gt;;
+    fn parse_status_event(&self, event: TerminalEvent) -> Option&lt;AgentStatusUpdate&gt;;
+}</code></pre>
+            </details>
+
+            <div class="callout">
+              <strong>实现纪律：</strong>
+              core crate 不依赖 GPUI、不依赖 SQLite、不依赖具体 PTY/Git 库。
+              UI crate 不直接执行 git/pty/browser 操作。所有副作用通过 application service 调用 provider。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="mvp">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">MVP Plan</div>
+            <h2>四阶段路线</h2>
+          </div>
+          <div class="roadmap-grid">
+            <div class="roadmap">
+              <strong>Phase 0：技术验证</strong>
+              <p>GPUI window、三栏布局、SQLite 连接、git CLI probe、PTY spawn。目标是验证 Windows/macOS/Linux 基础可行性。</p>
+            </div>
+            <div class="roadmap">
+              <strong>Phase 1：Task + Worktree + Terminal</strong>
+              <p>打开 repo，创建 task worktree，启动 Claude/Codex CLI，显示任务状态和 changed files。</p>
+            </div>
+            <div class="roadmap">
+              <strong>Phase 2：Diff Review 闭环</strong>
+              <p>文件 diff、行级评论、发送评论到当前 Agent、标记 sent、生成 commit message。</p>
+            </div>
+            <div class="roadmap">
+              <strong>Phase 3：Preview 和远程抽象</strong>
+              <p>localhost preview、browser selection、安全 payload、SSH provider、远程 PTY/FS/Git。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="development-plan">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">Implementation Plan</div>
+            <h2>开发计划：目标目录、技术栈、API 与 Step</h2>
+          </div>
+          <div class="stack">
+            <p class="lead">
+              这里的开发计划不是排期表，而是可执行的工程拆解。
+              每一步都明确目标目录、技术栈选择、架构/API 设计和具体开发内容。
+              总原则是先做 runtime 骨架，再做 Zed 风格三栏 UI，最后补齐 review、preview 与远程能力。
+            </p>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>目标目录结构</h3>
+                <span class="status">Target Tree</span>
+              </div>
+              <pre><code>D:\Workspace\Relay
+├─ Cargo.toml
+├─ Cargo.lock
+├─ README.md
+├─ docs
+│  ├─ architecture-investigation.html
+│  ├─ rfc-001-domain-model.md
+│  ├─ rfc-002-crate-layout.md
+│  ├─ rfc-003-agent-runtime.md
+│  ├─ rfc-004-ui-workbench.md
+│  └─ adr
+│     ├─ 0001-use-gpui.md
+│     ├─ 0002-use-provider-boundaries.md
+│     └─ 0003-cli-agent-first.md
+├─ crates
+│  ├─ relay_app
+│  │  └─ src
+│  │     ├─ main.rs
+│  │     ├─ bootstrap.rs
+│  │     └─ services.rs
+│  ├─ relay_ui
+│  │  └─ src
+│  │     ├─ lib.rs
+│  │     ├─ app_shell.rs
+│  │     ├─ task_list.rs
+│  │     ├─ terminal_pane.rs
+│  │     ├─ diff_pane.rs
+│  │     ├─ preview_pane.rs
+│  │     └─ theme.rs
+│  ├─ relay_core
+│  │  └─ src
+│  │     ├─ lib.rs
+│  │     ├─ ids.rs
+│  │     ├─ task.rs
+│  │     ├─ task_event.rs
+│  │     ├─ task_projection.rs
+│  │     └─ command.rs
+│  ├─ relay_project
+│  ├─ relay_worktree
+│  ├─ relay_terminal
+│  ├─ relay_agent
+│  ├─ relay_diff
+│  ├─ relay_preview
+│  ├─ relay_persistence
+│  └─ relay_infra
+├─ fixtures
+│  ├─ repos
+│  └─ terminal-output
+├─ xtask
+│  └─ src/main.rs
+└─ tests
+   ├─ integration
+   └─ smoke</code></pre>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>技术域</th>
+                  <th>推荐技术栈</th>
+                  <th>使用方式</th>
+                  <th>替换边界</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>UI</td>
+                  <td><code>gpui</code> published crate</td>
+                  <td>Zed 风格原生三栏工作台、命令面板、panel/dock、低 chrome UI。</td>
+                  <td><code>relay_ui</code> 只依赖 core projection，不掌握 IO。</td>
+                </tr>
+                <tr>
+                  <td>异步运行时</td>
+                  <td>GPUI executor + 必要时 <code>tokio</code> bridge</td>
+                  <td>UI 任务走 GPUI <code>Task</code>；外部 IO 统一封装，避免随处 spawn。</td>
+                  <td><code>relay_infra::runtime</code></td>
+                </tr>
+                <tr>
+                  <td>PTY</td>
+                  <td><code>portable-pty</code>, <code>vte</code>；后续评估 alacritty terminal model</td>
+                  <td>先稳定运行 Claude/Codex/Gemini CLI，再优化终端渲染和 scrollback。</td>
+                  <td><code>PtyProvider</code>, <code>TerminalSession</code></td>
+                </tr>
+                <tr>
+                  <td>Git</td>
+                  <td>MVP 使用 <code>git</code> CLI；后续评估 <code>gix</code></td>
+                  <td>worktree create/remove/status/diff 先走 git CLI，结果结构化解析。</td>
+                  <td><code>GitProvider</code>, <code>WorktreeProvider</code></td>
+                </tr>
+                <tr>
+                  <td>文件监听</td>
+                  <td><code>notify</code>, <code>ignore</code>, <code>walkdir</code></td>
+                  <td>监听 worktree changed files，忽略 target/node_modules/.git。</td>
+                  <td><code>FsWatcher</code></td>
+                </tr>
+                <tr>
+                  <td>Diff</td>
+                  <td><code>git diff --no-ext-diff</code> + <code>similar</code>/<code>imara-diff</code></td>
+                  <td>MVP 先展示 git diff；行级评论需要稳定 hunk/line 映射。</td>
+                  <td><code>DiffEngine</code></td>
+                </tr>
+                <tr>
+                  <td>持久化</td>
+                  <td><code>rusqlite</code> 或 <code>sqlx</code> SQLite</td>
+                  <td>保存 task、event log、terminal snapshot、settings、agent session metadata。</td>
+                  <td><code>TaskRepository</code>, <code>SettingsRepository</code></td>
+                </tr>
+                <tr>
+                  <td>配置</td>
+                  <td><code>serde</code>, <code>toml</code>, <code>schemars</code></td>
+                  <td>全局配置、项目配置、agent adapter 配置、主题配置。</td>
+                  <td><code>ConfigService</code></td>
+                </tr>
+                <tr>
+                  <td>日志/性能</td>
+                  <td><code>tracing</code>, <code>tracing-subscriber</code>, <code>tracing-appender</code></td>
+                  <td>task/worktree/pty/agent 生命周期全链路 trace。</td>
+                  <td><code>TelemetryService</code></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>API 分层设计</h3>
+                <span class="status">API</span>
+              </div>
+              <pre><code>// UI 层只调用 ApplicationService。
+pub trait ApplicationService {
+    fn open_project(&self, request: OpenProjectRequest) -> Task&lt;Result&lt;ProjectId&gt;&gt;;
+    fn create_task(&self, request: CreateTaskRequest) -> Task&lt;Result&lt;TaskId&gt;&gt;;
+    fn launch_agent(&self, task_id: TaskId, agent: AgentKind) -> Task&lt;Result&lt;AgentSessionId&gt;&gt;;
+    fn send_to_agent(&self, task_id: TaskId, message: AgentMessage) -> Task&lt;Result&lt;()&gt;&gt;;
+    fn archive_task(&self, task_id: TaskId) -> Task&lt;Result&lt;()&gt;&gt;;
+}
+
+// Core 层不做 IO，只处理命令、事件、状态转换。
+pub enum TaskCommand {
+    CreateTask(CreateTask),
+    AttachWorktree(WorktreeSnapshot),
+    AttachTerminal(TerminalSessionId),
+    AttachAgent(AgentSessionId),
+    ApplyAgentStatus(AgentStatusUpdate),
+    RefreshChangedFiles(Vec&lt;ChangedFile&gt;),
+    AddReviewComment(ReviewComment),
+    MarkReviewDelivered(Vec&lt;ReviewCommentId&gt;),
+    Archive,
+}
+
+pub enum TaskEvent {
+    TaskCreated(TaskCreated),
+    WorktreeCreated(WorktreeCreated),
+    TerminalStarted(TerminalStarted),
+    AgentStarted(AgentStarted),
+    AgentStatusChanged(AgentStatusChanged),
+    ChangedFilesUpdated(ChangedFilesUpdated),
+    ReviewCommentAdded(ReviewCommentAdded),
+    ReviewDelivered(ReviewDelivered),
+    TaskArchived(TaskArchived),
+    ProviderFailed(ProviderFailure),
+}</code></pre>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>Step 0：文档与决策锁定</h3>
+                <span class="status">Docs</span>
+              </div>
+              <table>
+                <tbody>
+                  <tr>
+                    <th>目标目录</th>
+                    <td><code>docs/</code>, <code>docs/adr/</code></td>
+                  </tr>
+                  <tr>
+                    <th>开发内容</th>
+                    <td>创建 domain model、crate layout、agent runtime、UI workbench 四份 RFC；创建 GPUI/provider/CLI-agent-first 三份 ADR。</td>
+                  </tr>
+                  <tr>
+                    <th>API 设计</th>
+                    <td>先冻结 <code>Task</code>、<code>TaskEvent</code>、<code>TaskProjection</code>、<code>Provider</code> 命名和职责。</td>
+                  </tr>
+                  <tr>
+                    <th>完成标准</th>
+                    <td>任何人读完 RFC 都能知道第一版写哪些 crate、不写哪些功能、为什么对标 Zed UI + Orca workflow。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>Step 1：Rust Workspace 与 App Shell</h3>
+                <span class="status">Foundation</span>
+              </div>
+              <table>
+                <tbody>
+                  <tr>
+                    <th>目标目录</th>
+                    <td><code>Cargo.toml</code>, <code>crates/relay_app</code>, <code>crates/relay_ui</code>, <code>crates/relay_infra</code>, <code>xtask</code></td>
+                  </tr>
+                  <tr>
+                    <th>技术栈</th>
+                    <td><code>gpui</code>, <code>tracing</code>, <code>anyhow</code>, <code>thiserror</code></td>
+                  </tr>
+                  <tr>
+                    <th>架构设计</th>
+                    <td><code>relay_app</code> 负责启动；<code>relay_ui</code> 只负责 view；<code>relay_infra</code> 提供 logging、paths、platform。</td>
+                  </tr>
+                  <tr>
+                    <th>开发内容</th>
+                    <td>创建窗口、Zed 风格主题 token、三栏空布局、基础命令面板入口、日志目录和启动 trace。当前已完成 workspace、app shell、logging/paths 和启动 smoke test。</td>
+                  </tr>
+                  <tr>
+                    <th>完成标准</th>
+                    <td>运行后出现原生窗口，左/中/右三栏可 resize，日志文件记录 app startup。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>Step 2：Core Domain 与 Event Log</h3>
+                <span class="status">Core</span>
+              </div>
+              <table>
+                <tbody>
+                  <tr>
+                    <th>目标目录</th>
+                    <td><code>crates/relay_core/src/task.rs</code>, <code>task_event.rs</code>, <code>task_projection.rs</code>, <code>command.rs</code>, <code>ids.rs</code></td>
+                  </tr>
+                  <tr>
+                    <th>技术栈</th>
+                    <td><code>serde</code>, <code>uuid</code>, <code>time</code>, <code>strum</code>, <code>proptest</code> 可选</td>
+                  </tr>
+                  <tr>
+                    <th>架构设计</th>
+                    <td>Task aggregate 只接收 command、产出 event、更新 projection；不依赖 GPUI、不依赖 IO。</td>
+                  </tr>
+                  <tr>
+                    <th>API 设计</th>
+                    <td><code>Task::apply(event)</code>, <code>Task::handle(command)</code>, <code>TaskProjection::from_task</code>, <code>TaskStatus</code> 状态机。</td>
+                  </tr>
+                  <tr>
+                    <th>开发内容</th>
+                    <td>实现 Task 生命周期：Draft、CreatingWorktree、StartingAgent、Working、Waiting、Done、Reviewing、ReadyToCommit、Archived、Failed。</td>
+                  </tr>
+                  <tr>
+                    <th>完成标准</th>
+                    <td>状态机单测覆盖合法/非法转换，event replay 能重建 projection。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>Step 3：Persistence 与 Settings</h3>
+                <span class="status">Storage</span>
+              </div>
+              <table>
+                <tbody>
+                  <tr>
+                    <th>目标目录</th>
+                    <td><code>crates/relay_persistence</code>, <code>crates/relay_infra/src/paths.rs</code></td>
+                  </tr>
+                  <tr>
+                    <th>技术栈</th>
+                    <td><code>rusqlite</code>/<code>sqlx</code>, <code>serde_json</code>, <code>toml</code>, <code>directories</code></td>
+                  </tr>
+                  <tr>
+                    <th>架构设计</th>
+                    <td>SQLite 保存 append-only task_events；task projection 可以缓存但必须可由 event log 重建。</td>
+                  </tr>
+                  <tr>
+                    <th>API 设计</th>
+                    <td><code>TaskRepository::append_events</code>, <code>load_task</code>, <code>list_tasks</code>, <code>save_snapshot</code>, <code>SettingsRepository</code>。</td>
+                  </tr>
+                  <tr>
+                    <th>开发内容</th>
+                    <td>设计 migrations、task_events 表、task_snapshots 表、settings 表；实现 repository 单测。</td>
+                  </tr>
+                  <tr>
+                    <th>完成标准</th>
+                    <td>创建 task、追加 event、重启后恢复 task list 和状态。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>Step 4：Project / Git / Worktree Provider</h3>
+                <span class="status">Worktree</span>
+              </div>
+              <table>
+                <tbody>
+                  <tr>
+                    <th>目标目录</th>
+                    <td><code>crates/relay_project</code>, <code>crates/relay_worktree</code></td>
+                  </tr>
+                  <tr>
+                    <th>技术栈</th>
+                    <td><code>git</code> CLI, <code>notify</code>, <code>ignore</code>, <code>walkdir</code>, <code>shell-words</code>/<code>shlex</code></td>
+                  </tr>
+                  <tr>
+                    <th>架构设计</th>
+                    <td>Project 管 repo registry；WorktreeProvider 负责 git worktree lifecycle；FsWatcher 负责 changed files refresh。</td>
+                  </tr>
+                  <tr>
+                    <th>API 设计</th>
+                    <td><code>ProjectService::open_repo</code>, <code>WorktreeProvider::create_worktree</code>, <code>remove_worktree</code>, <code>changed_files</code>, <code>diff</code>。</td>
+                  </tr>
+                  <tr>
+                    <th>开发内容</th>
+                    <td>实现 repo 检测、默认 branch/base ref、worktree 命名、branch 命名、安全删除、dirty state 检查、文件变更事件。</td>
+                  </tr>
+                  <tr>
+                    <th>完成标准</th>
+                    <td>从 UI/命令创建 task 时自动创建 worktree；修改文件后 changed files 自动更新；删除前能阻止危险操作。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>Step 5：Terminal Runtime</h3>
+                <span class="status">PTY</span>
+              </div>
+              <table>
+                <tbody>
+                  <tr>
+                    <th>目标目录</th>
+                    <td><code>crates/relay_terminal</code>, <code>crates/relay_ui/src/terminal_pane.rs</code></td>
+                  </tr>
+                  <tr>
+                    <th>技术栈</th>
+                    <td><code>portable-pty</code>, <code>vte</code>, <code>crossbeam-channel</code>/<code>flume</code>, <code>unicode-width</code></td>
+                  </tr>
+                  <tr>
+                    <th>架构设计</th>
+                    <td>TerminalSession 管进程生命周期；TerminalBuffer 管 scrollback；UI 只订阅 terminal projection。</td>
+                  </tr>
+                  <tr>
+                    <th>API 设计</th>
+                    <td><code>PtyProvider::spawn/write/resize/kill</code>, <code>TerminalEvent::Output/Exit/Title/Cwd</code>, <code>TerminalSnapshot</code>。</td>
+                  </tr>
+                  <tr>
+                    <th>开发内容</th>
+                    <td>实现 shell spawn、cwd/env、output streaming、input write、resize、exit cleanup、basic scrollback、terminal pane attach。</td>
+                  </tr>
+                  <tr>
+                    <th>完成标准</th>
+                    <td>每个 task 拥有独立 terminal；切换 task 不丢输出；关闭 task 释放进程。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>Step 6：Agent Runtime 与 CLI Adapter</h3>
+                <span class="status">Agent</span>
+              </div>
+              <table>
+                <tbody>
+                  <tr>
+                    <th>目标目录</th>
+                    <td><code>crates/relay_agent</code>, <code>crates/relay_agent/src/adapters</code></td>
+                  </tr>
+                  <tr>
+                    <th>技术栈</th>
+                    <td><code>which</code>, <code>serde</code>, <code>regex</code>, terminal event stream</td>
+                  </tr>
+                  <tr>
+                    <th>架构设计</th>
+                    <td>AgentAdapter 不拥有终端，只生成 launch plan、解析状态、处理 prompt delivery 策略。</td>
+                  </tr>
+                  <tr>
+                    <th>API 设计</th>
+                    <td><code>AgentRegistry</code>, <code>AgentAdapter</code>, <code>AgentLaunchPlan</code>, <code>AgentStatusUpdate</code>, <code>PromptDelivery</code>。</td>
+                  </tr>
+                  <tr>
+                    <th>开发内容</th>
+                    <td>实现 Claude、Codex、Gemini 三个 adapter；支持 argv、flag、stdin-after-start 三种 prompt 模式；支持 stale 状态。</td>
+                  </tr>
+                  <tr>
+                    <th>完成标准</th>
+                    <td>用户能选择 Agent，在 task worktree 中启动原生 CLI，并在 task list 看到 working/waiting/done。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>Step 7：Zed 风格 / Orca 布局 Workbench UI</h3>
+                <span class="status">UI</span>
+              </div>
+              <table>
+                <tbody>
+                  <tr>
+                    <th>目标目录</th>
+                    <td><code>crates/relay_ui/src/app_shell.rs</code>, <code>task_list.rs</code>, <code>terminal_pane.rs</code>, <code>diff_pane.rs</code>, <code>theme.rs</code></td>
+                  </tr>
+                  <tr>
+                    <th>技术栈</th>
+                    <td><code>gpui</code>, Relay projection API</td>
+                  </tr>
+                  <tr>
+                    <th>架构设计</th>
+                    <td>UI 只读 <code>WorkspaceProjection</code> 和 <code>TaskProjection</code>；用户动作转为 command。</td>
+                  </tr>
+                  <tr>
+                    <th>API 设计</th>
+                    <td><code>WorkspaceViewModel</code>, <code>TaskListItem</code>, <code>PaneRoute</code>, <code>Command</code>, <code>FocusTarget</code>。</td>
+                  </tr>
+                  <tr>
+                    <th>开发内容</th>
+                    <td>左侧 task/worktree 状态分组，中间 terminal/preview tabs，右侧 file/diff/review tabs；命令面板创建 task 和启动 agent。</td>
+                  </tr>
+                  <tr>
+                    <th>完成标准</th>
+                    <td>UI 视觉接近 Zed，布局功能对标 Orca；能并行显示多个 task 状态，切换无明显卡顿。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>Step 8：Diff Review / Fix Loop</h3>
+                <span class="status">Review</span>
+              </div>
+              <table>
+                <tbody>
+                  <tr>
+                    <th>目标目录</th>
+                    <td><code>crates/relay_diff</code>, <code>crates/relay_ui/src/diff_pane.rs</code></td>
+                  </tr>
+                  <tr>
+                    <th>技术栈</th>
+                    <td><code>similar</code>/<code>imara-diff</code>, git diff parser, serde</td>
+                  </tr>
+                  <tr>
+                    <th>架构设计</th>
+                    <td>DiffReview 属于 Task；ReviewComment 有 selected range、line identity、delivery state。</td>
+                  </tr>
+                  <tr>
+                    <th>API 设计</th>
+                    <td><code>DiffEngine::load</code>, <code>ReviewService::add_comment</code>, <code>deliver_comments_to_agent</code>, <code>mark_delivered</code>。</td>
+                  </tr>
+                  <tr>
+                    <th>开发内容</th>
+                    <td>实现 file tree diff、hunk view、行级评论、评论发送到 active agent、sent/dirty 状态、commit message 草案。</td>
+                  </tr>
+                  <tr>
+                    <th>完成标准</th>
+                    <td>用户能在 diff 上评论，把评论发送给 Agent，Agent 修改后刷新 diff 并保留评论历史。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>Step 9：Preview / Browser Context / Remote Provider</h3>
+                <span class="status">Expansion</span>
+              </div>
+              <table>
+                <tbody>
+                  <tr>
+                    <th>目标目录</th>
+                    <td><code>crates/relay_preview</code>, <code>crates/relay_ui/src/preview_pane.rs</code>, <code>crates/relay_worktree/src/remote.rs</code></td>
+                  </tr>
+                  <tr>
+                    <th>技术栈</th>
+                    <td>localhost preview、WebView/系统浏览器桥、SSH2 或 remote command provider、安全 payload sanitizer</td>
+                  </tr>
+                  <tr>
+                    <th>架构设计</th>
+                    <td>PreviewTarget 属于 Task；Browser selection payload 必须预算化、脱敏、可审计；RemoteProvider 复用 Worktree/Pty/Fs trait。</td>
+                  </tr>
+                  <tr>
+                    <th>API 设计</th>
+                    <td><code>PreviewProvider</code>, <code>BrowserContextPayload</code>, <code>RemoteExecutionHost</code>, <code>RemotePtyProvider</code>。</td>
+                  </tr>
+                  <tr>
+                    <th>开发内容</th>
+                    <td>实现 localhost URL 绑定、预览 tab、截图/DOM selection 草案、SSH worktree/PTY spike、远程错误恢复。</td>
+                  </tr>
+                  <tr>
+                    <th>完成标准</th>
+                    <td>前端项目能从 task 打开 preview，把选中的 UI 上下文安全发送给 Agent；远程 provider 能跑最小 agent session。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>开发顺序总表</h3>
+                <span class="status">Steps</span>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Step</th>
+                    <th>核心产物</th>
+                    <th>必须先完成的 API</th>
+                    <th>用户可见结果</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>0</td>
+                    <td>RFC / ADR</td>
+                    <td>命名、边界、scope</td>
+                    <td>项目方向稳定</td>
+                  </tr>
+                  <tr>
+                    <td>1</td>
+                    <td>GPUI app shell</td>
+                    <td><code>AppBootstrap</code></td>
+                    <td>空三栏窗口</td>
+                  </tr>
+                  <tr>
+                    <td>2</td>
+                    <td>Task core</td>
+                    <td><code>TaskCommand</code>, <code>TaskEvent</code></td>
+                    <td>任务状态可模拟</td>
+                  </tr>
+                  <tr>
+                    <td>3</td>
+                    <td>SQLite persistence</td>
+                    <td><code>TaskRepository</code></td>
+                    <td>任务可恢复</td>
+                  </tr>
+                  <tr>
+                    <td>4</td>
+                    <td>Git worktree</td>
+                    <td><code>WorktreeProvider</code></td>
+                    <td>能创建隔离任务目录</td>
+                  </tr>
+                  <tr>
+                    <td>5</td>
+                    <td>PTY terminal</td>
+                    <td><code>PtyProvider</code></td>
+                    <td>能运行原生 CLI</td>
+                  </tr>
+                  <tr>
+                    <td>6</td>
+                    <td>Agent adapters</td>
+                    <td><code>AgentAdapter</code></td>
+                    <td>能启动 Claude/Codex</td>
+                  </tr>
+                  <tr>
+                    <td>7</td>
+                    <td>Workbench UI</td>
+                    <td><code>WorkspaceProjection</code></td>
+                    <td>Rust 高性能 Orca MVP</td>
+                  </tr>
+                  <tr>
+                    <td>8</td>
+                    <td>Diff review</td>
+                    <td><code>DiffEngine</code>, <code>ReviewService</code></td>
+                    <td>review-fix 闭环</td>
+                  </tr>
+                  <tr>
+                    <td>9</td>
+                    <td>Preview / remote</td>
+                    <td><code>PreviewProvider</code>, <code>RemoteProvider</code></td>
+                    <td>前端预览与远程 Agent</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="callout">
+              <strong>第一条实现路径：</strong>
+              不从 UI 细节开局。先创建 workspace 和 core/persistence/worktree/terminal/agent 五个最小 crate，
+              用命令或极简 UI 跑通 “create task -> create worktree -> spawn agent -> record status -> show diff”。
+              这条链路打通后，再把 Zed 风格 UI 补上去。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="risks" class="footer">
+        <div class="section-grid">
+          <div>
+            <div class="section-kicker">Risks / Legal / Decisions</div>
+            <h2>风险与决策记录</h2>
+          </div>
+          <div class="stack">
+            <div class="decision">
+              <div class="decision-title">
+                <h3>许可风险</h3>
+                <span class="status risk">Important</span>
+              </div>
+              <p>
+                Orca README 标注 MIT License；Zed README 标注主体 GPL-3.0-or-later，部分 Apache-2.0。
+                如果 Relay 不准备采用 GPL 兼容许可证，调研 Zed 时只能借鉴架构思想、模块边界和公开 API 使用方式，
+                不应复制 Zed 的 GPL 源码实现。
+              </p>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>GPUI 版本风险</h3>
+                <span class="status warn">Watch</span>
+              </div>
+              <p>
+                GPUI README 明确说明仍在 active development 且 pre-1.0，可能频繁 breaking change。
+                Relay 需要把 UI 层和 domain core 分离，避免 GPUI API 变化影响任务模型和运行时。
+              </p>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>终端技术风险</h3>
+                <span class="status warn">Watch</span>
+              </div>
+              <p>
+                真正难点不是 spawn 一个 shell，而是长期稳定处理 TUI、中文渲染、scrollback、resize、Windows ConPTY、进程树清理、恢复、远程复连。
+                建议第一版先选择成熟 PTY + 终端解析方案，再逐步优化渲染。
+              </p>
+            </div>
+
+            <div class="decision">
+              <div class="decision-title">
+                <h3>下一步建议</h3>
+                <span class="status">Next</span>
+              </div>
+              <ul>
+                <li>先写 <code>docs/rfc-001-domain-model.md</code>，锁定 Task/Worktree/AgentSession/TerminalSession schema。</li>
+                <li>再写 <code>docs/rfc-002-crate-layout.md</code>，决定每个 crate 的 public API 边界。</li>
+                <li>最后做 GPUI + PTY spike，不做完整产品，只验证一个 Claude/Codex CLI 能在 task worktree 里稳定跑。</li>
+              </ul>
+            </div>
+
+            <p class="print-note">
+              调研基于本机源码：Orca commit e22d2c2，Zed commit e4f6742。本文档不包含从参考仓库复制的实现代码。
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const links = Array.from(document.querySelectorAll("nav a"));
+    const sections = links
+      .map((link) => document.querySelector(link.getAttribute("href")))
+      .filter(Boolean);
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        links.forEach((link) => {
+          link.classList.toggle("active", link.getAttribute("href") === `#${visible.target.id}`);
+        });
+      },
+      { rootMargin: "-20% 0px -65% 0px", threshold: [0, 0.2, 0.6] }
+    );
+
+    sections.forEach((section) => observer.observe(section));
+  </script>
+</body>
+</html>

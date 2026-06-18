@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/relay_app",
+    "crates/relay_ui",
+    "crates/relay_infra",
+]
+default-members = ["crates/relay_app"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+directories = "6"
+gpui = "0.2.2"
+relay_infra = { path = "crates/relay_infra" }
+relay_ui = { path = "crates/relay_ui" }
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
