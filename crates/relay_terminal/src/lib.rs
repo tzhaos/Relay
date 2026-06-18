@@ -260,7 +260,7 @@ impl PtyProvider for TerminalRuntime {
                         let _ = session.writer.write_all(CURSOR_POSITION_REPORT);
                         let _ = session.writer.flush();
                     }
-                    session.scrollback.push(&strip_device_status_report(data));
+                    session.scrollback.push(&visible_terminal_output(data));
                 }
             }
             TerminalEvent::Title { session_id, title } => {
@@ -320,6 +320,19 @@ fn strip_device_status_report(data: &[u8]) -> Cow<'_, [u8]> {
         }
     }
     Cow::Owned(stripped)
+}
+
+fn visible_terminal_output(data: &[u8]) -> Cow<'_, [u8]> {
+    let without_status_report = strip_device_status_report(data);
+    if !contains_escape_sequence(without_status_report.as_ref()) {
+        return without_status_report;
+    }
+
+    Cow::Owned(strip_ansi_escapes::strip(without_status_report.as_ref()))
+}
+
+fn contains_escape_sequence(data: &[u8]) -> bool {
+    data.contains(&b'\x1b') || data.contains(&0x9b)
 }
 
 struct TerminalSession {
@@ -470,9 +483,16 @@ mod tests {
 
     #[test]
     fn terminal_output_should_strip_cursor_position_queries_from_scrollback() {
-        let visible = strip_device_status_report(b"hello \x1b[6nworld");
+        let visible = visible_terminal_output(b"hello \x1b[6nworld");
 
         assert_eq!(visible.as_ref(), b"hello world");
+    }
+
+    #[test]
+    fn terminal_output_should_strip_ansi_sequences_from_scrollback() {
+        let visible = visible_terminal_output(b"\x1b[32mok\x1b[0m plain");
+
+        assert_eq!(visible.as_ref(), b"ok plain");
     }
 
     #[cfg(windows)]

@@ -11,4 +11,5 @@ path = "src/lib.rs"
 [dependencies]
 portable-pty.workspace = true
 relay_core.workspace = true
+strip-ansi-escapes.workspace = true
 thiserror.workspace = true
