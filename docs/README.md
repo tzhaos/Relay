@@ -11,6 +11,8 @@ Relay is a Rust + GPUI high-performance AI development workbench:
 
 ## Start Here
 
+- [UI Design Contract](../DESIGN.md)
+- [UI Design Workflow](design/README.md)
 - [Architecture Investigation](architecture-investigation.html)
 - [RFC-001: Domain Model](rfc-001-domain-model.md)
 - [RFC-002: Crate Layout](rfc-002-crate-layout.md)
