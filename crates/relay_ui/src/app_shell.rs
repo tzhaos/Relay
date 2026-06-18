@@ -15,7 +15,7 @@ use crate::{
     task_list::task_list,
     terminal_pane::{TerminalPaneProjection, terminal_pane},
     theme::RelayTheme,
-    workbench::{ReviewDraftTarget, WorkbenchCommand, WorkspaceViewModel},
+    workbench::{PaneRoute, ReviewDraftTarget, WorkbenchCommand, WorkspaceViewModel},
 };
 
 pub struct AppShell {
@@ -43,6 +43,11 @@ pub trait TaskDataSource {
         body: &str,
     ) -> anyhow::Result<Vec<TaskProjection>>;
     fn attach_worktree_preview(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
+    fn attach_file_preview(
+        &mut self,
+        task_id: TaskId,
+        path: &str,
+    ) -> anyhow::Result<Vec<TaskProjection>>;
     fn open_preview_target(
         &mut self,
         task_id: TaskId,
@@ -294,6 +299,10 @@ impl AppShell {
         }
         if let WorkbenchCommand::AttachWorktreePreview(task_id) = command {
             self.attach_worktree_preview(task_id, cx);
+            return;
+        }
+        if let WorkbenchCommand::AttachFilePreview { task_id, path } = command {
+            self.attach_file_preview(task_id, &path, cx);
             return;
         }
         if let WorkbenchCommand::OpenPreviewTarget { task_id, target_id } = command {
@@ -609,6 +618,21 @@ impl AppShell {
         match self.task_data_source.attach_worktree_preview(task_id) {
             Ok(tasks) => {
                 self.replace_tasks_preserving_active(tasks);
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn attach_file_preview(&mut self, task_id: TaskId, path: &str, cx: &mut Context<Self>) {
+        match self.task_data_source.attach_file_preview(task_id, path) {
+            Ok(tasks) => {
+                self.replace_tasks_preserving_active(tasks);
+                self.view_model
+                    .apply_command(WorkbenchCommand::SetPaneRoute(PaneRoute::Preview));
                 self.last_error = None;
             }
             Err(error) => {

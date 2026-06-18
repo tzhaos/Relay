@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::Duration,
 };
 
@@ -365,6 +365,47 @@ impl RelayRuntime {
             task.id,
             PreviewRequest {
                 label: "Worktree".to_string(),
+                uri,
+            },
+            OffsetDateTime::now_utc(),
+        )?;
+        let events = task.handle(command)?;
+        apply_events(&mut task, &events)?;
+        let projection = TaskProjection::from_task(&task);
+        {
+            let mut repository = self.database.task_repository();
+            repository.append_events(&events)?;
+            repository.save_snapshot(&projection)?;
+        }
+        self.list_task_projections()
+    }
+
+    fn attach_file_preview_for_task(
+        &mut self,
+        task_id: TaskId,
+        relative_path: &str,
+    ) -> Result<Vec<TaskProjection>> {
+        let relative_path = relative_path.trim();
+        let mut task = self
+            .database
+            .task_repository()
+            .load_task(task_id)?
+            .context("task not found")?;
+        let worktree_path = task
+            .worktree
+            .as_ref()
+            .map(|worktree| PathBuf::from(&worktree.path))
+            .context("task has no worktree")?;
+        let file_path = resolve_worktree_file_path(&worktree_path, relative_path)?;
+        let uri = worktree_file_uri(&file_path)?;
+        if task.preview_targets.iter().any(|target| target.uri == uri) {
+            return self.list_task_projections();
+        }
+
+        let command = self.preview_provider.attach_target(
+            task.id,
+            PreviewRequest {
+                label: relative_path.to_string(),
                 uri,
             },
             OffsetDateTime::now_utc(),
@@ -774,6 +815,10 @@ impl TaskDataSource for RelayRuntime {
         self.attach_worktree_preview_for_task(task_id)
     }
 
+    fn attach_file_preview(&mut self, task_id: TaskId, path: &str) -> Result<Vec<TaskProjection>> {
+        self.attach_file_preview_for_task(task_id, path)
+    }
+
     fn open_preview_target(&mut self, task_id: TaskId, target_id: PreviewTargetId) -> Result<()> {
         self.open_preview_target_for_task(task_id, target_id)
     }
@@ -900,12 +945,56 @@ fn project_root_key(root: &Path) -> String {
     root.to_string_lossy().to_string()
 }
 
+fn resolve_worktree_file_path(worktree_path: &Path, relative_path: &str) -> Result<PathBuf> {
+    if relative_path.is_empty() {
+        return Err(anyhow!("preview file path cannot be empty"));
+    }
+    let relative = Path::new(relative_path);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::Prefix(_) | Component::RootDir
+            )
+        })
+    {
+        return Err(anyhow!(
+            "preview file path must stay inside the task worktree: {relative_path}"
+        ));
+    }
+
+    let worktree = worktree_path.canonicalize().with_context(|| {
+        format!(
+            "failed to resolve worktree path: {}",
+            worktree_path.display()
+        )
+    })?;
+    let file = worktree
+        .join(relative)
+        .canonicalize()
+        .with_context(|| format!("failed to resolve preview file: {relative_path}"))?;
+    if !file.starts_with(&worktree) {
+        return Err(anyhow!(
+            "preview file path escapes the task worktree: {relative_path}"
+        ));
+    }
+    if !file.is_file() {
+        return Err(anyhow!("preview target is not a file: {relative_path}"));
+    }
+
+    Ok(file)
+}
+
 fn worktree_file_uri(path: &Path) -> Result<String> {
     let canonical = path
         .canonicalize()
         .with_context(|| format!("failed to resolve worktree path: {}", path.display()))?;
-    let url = Url::from_directory_path(&canonical)
-        .map_err(|()| anyhow!("failed to convert worktree path to file URI"))?;
+    let url = if canonical.is_dir() {
+        Url::from_directory_path(&canonical)
+    } else {
+        Url::from_file_path(&canonical)
+    }
+    .map_err(|()| anyhow!("failed to convert worktree path to file URI"))?;
     Ok(url.to_string())
 }
 
@@ -1836,6 +1925,85 @@ mod tests {
             .expect("task should remain listed");
 
         assert_eq!(task.preview_target_count, 1);
+    }
+
+    #[test]
+    fn attach_file_preview_should_persist_file_target() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Preview file")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+
+        let tasks = runtime
+            .attach_file_preview_for_task(task_id, "README.md")
+            .expect("file preview should attach");
+        let task = tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .expect("task should remain listed");
+        let target = task
+            .preview_targets
+            .first()
+            .expect("preview target should exist");
+
+        assert_eq!(task.preview_target_count, 1);
+        assert_eq!(target.label, "README.md");
+        assert!(target.uri.starts_with("file://"));
+    }
+
+    #[test]
+    fn attach_file_preview_should_reject_paths_outside_worktree() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Preview escape")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+
+        let error = runtime
+            .attach_file_preview_for_task(task_id, "../README.md")
+            .expect_err("preview path should stay inside worktree");
+
+        assert!(
+            error.to_string().contains("inside the task worktree"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

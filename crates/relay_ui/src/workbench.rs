@@ -47,6 +47,10 @@ pub enum WorkbenchCommand {
     DeliverReview(TaskId),
     ArchiveTask(TaskId),
     AttachWorktreePreview(TaskId),
+    AttachFilePreview {
+        task_id: TaskId,
+        path: String,
+    },
     OpenPreviewTarget {
         task_id: TaskId,
         target_id: PreviewTargetId,
@@ -387,6 +391,7 @@ impl WorkspaceViewModel {
             WorkbenchCommand::DeliverReview(_) => {}
             WorkbenchCommand::ArchiveTask(_) => {}
             WorkbenchCommand::AttachWorktreePreview(_) => {}
+            WorkbenchCommand::AttachFilePreview { .. } => {}
             WorkbenchCommand::OpenPreviewTarget { .. } => {}
             WorkbenchCommand::WriteTerminal(_, _) => {}
         }

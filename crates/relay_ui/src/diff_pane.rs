@@ -294,7 +294,7 @@ fn files_tab(
         let tree = DiffTree::from_changed_files(&changed_files);
         for row in &tree.rows {
             row_count += 1;
-            rows = rows.child(tree_row(theme, row, cx));
+            rows = rows.child(tree_row(theme, task.id, row, cx));
         }
     }
 
@@ -516,7 +516,12 @@ fn summary(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
         )
 }
 
-fn file_row(theme: RelayTheme, file: &ChangedFile, cx: &mut Context<AppShell>) -> impl IntoElement {
+fn file_row(
+    theme: RelayTheme,
+    task_id: TaskId,
+    file: &ChangedFile,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
     let (label, color) = match file.status {
         ChangeStatus::Added => ("A", theme.accent),
         ChangeStatus::Modified => ("M", theme.warning),
@@ -532,6 +537,7 @@ fn file_row(theme: RelayTheme, file: &ChangedFile, cx: &mut Context<AppShell>) -
         .py_2()
         .flex()
         .items_center()
+        .justify_between()
         .gap_2()
         .bg(theme.chrome)
         .cursor_pointer()
@@ -545,22 +551,36 @@ fn file_row(theme: RelayTheme, file: &ChangedFile, cx: &mut Context<AppShell>) -
         }))
         .child(
             div()
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(color)
-                .child(label),
-        )
-        .child(
-            div()
                 .min_w_0()
-                .truncate()
-                .text_sm()
-                .text_color(theme.text)
-                .child(file.path.clone()),
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(color)
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_sm()
+                        .text_color(theme.text)
+                        .child(file.path.clone()),
+                ),
         )
+        .children(preview_file_action(theme, task_id, file, cx))
 }
 
-fn tree_row(theme: RelayTheme, row: &DiffTreeRow, cx: &mut Context<AppShell>) -> gpui::AnyElement {
+fn tree_row(
+    theme: RelayTheme,
+    task_id: TaskId,
+    row: &DiffTreeRow,
+    cx: &mut Context<AppShell>,
+) -> gpui::AnyElement {
     match row.kind {
         DiffTreeRowKind::Directory => div()
             .px_2()
@@ -576,6 +596,7 @@ fn tree_row(theme: RelayTheme, row: &DiffTreeRow, cx: &mut Context<AppShell>) ->
                 .ml(px((row.depth as f32) * 12.0))
                 .child(file_row(
                     theme,
+                    task_id,
                     &ChangedFile {
                         path: row.path.clone(),
                         status,
@@ -585,6 +606,52 @@ fn tree_row(theme: RelayTheme, row: &DiffTreeRow, cx: &mut Context<AppShell>) ->
                 .into_any_element()
         }
     }
+}
+
+fn preview_file_action(
+    theme: RelayTheme,
+    task_id: TaskId,
+    file: &ChangedFile,
+    cx: &mut Context<AppShell>,
+) -> Option<gpui::AnyElement> {
+    if file.status == ChangeStatus::Deleted {
+        return None;
+    }
+
+    let path = file.path.clone();
+    Some(
+        div()
+            .flex_shrink_0()
+            .h(px(22.0))
+            .px_2()
+            .rounded_sm()
+            .border_1()
+            .border_color(theme.selection_line)
+            .bg(theme.panel)
+            .flex()
+            .items_center()
+            .text_xs()
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(theme.text)
+            .cursor_pointer()
+            .hover(|style| style.bg(theme.selection))
+            .id((
+                gpui::ElementId::from(gpui::SharedString::from(path.clone())),
+                "preview-file",
+            ))
+            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                this.dispatch(
+                    WorkbenchCommand::AttachFilePreview {
+                        task_id,
+                        path: path.clone(),
+                    },
+                    cx,
+                );
+                cx.stop_propagation();
+            }))
+            .child("Preview")
+            .into_any_element(),
+    )
 }
 
 fn delivery_control(
