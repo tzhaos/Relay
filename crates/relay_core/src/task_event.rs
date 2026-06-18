@@ -32,6 +32,12 @@ pub struct TerminalStarted {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalStopped {
+    pub task_id: TaskId,
+    pub occurred_at: Timestamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentStarted {
     pub task_id: TaskId,
     pub id: AgentSessionId,
@@ -73,6 +79,12 @@ pub struct PreviewAttached {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeRemoved {
+    pub task_id: TaskId,
+    pub occurred_at: Timestamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskArchived {
     pub task_id: TaskId,
     pub occurred_at: Timestamp,
@@ -90,12 +102,14 @@ pub enum TaskEvent {
     TaskCreated(TaskCreated),
     WorktreeAttached(WorktreeAttached),
     TerminalStarted(TerminalStarted),
+    TerminalStopped(TerminalStopped),
     AgentStarted(AgentStarted),
     AgentStatusChanged(AgentStatusChanged),
     ChangedFilesUpdated(ChangedFilesUpdated),
     ReviewCommentAdded(ReviewCommentAdded),
     ReviewDelivered(ReviewDelivered),
     PreviewAttached(PreviewAttached),
+    WorktreeRemoved(WorktreeRemoved),
     TaskArchived(TaskArchived),
     ProviderFailed(ProviderFailed),
 }
@@ -106,12 +120,14 @@ impl TaskEvent {
             Self::TaskCreated(event) => event.id,
             Self::WorktreeAttached(event) => event.task_id,
             Self::TerminalStarted(event) => event.task_id,
+            Self::TerminalStopped(event) => event.task_id,
             Self::AgentStarted(event) => event.task_id,
             Self::AgentStatusChanged(event) => event.task_id,
             Self::ChangedFilesUpdated(event) => event.task_id,
             Self::ReviewCommentAdded(event) => event.task_id,
             Self::ReviewDelivered(event) => event.task_id,
             Self::PreviewAttached(event) => event.task_id,
+            Self::WorktreeRemoved(event) => event.task_id,
             Self::TaskArchived(event) => event.task_id,
             Self::ProviderFailed(event) => event.task_id,
         }
@@ -122,12 +138,14 @@ impl TaskEvent {
             Self::TaskCreated(_) => "task.created",
             Self::WorktreeAttached(_) => "worktree.attached",
             Self::TerminalStarted(_) => "terminal.started",
+            Self::TerminalStopped(_) => "terminal.stopped",
             Self::AgentStarted(_) => "agent.started",
             Self::AgentStatusChanged(_) => "agent.status_changed",
             Self::ChangedFilesUpdated(_) => "changed_files.updated",
             Self::ReviewCommentAdded(_) => "review.comment_added",
             Self::ReviewDelivered(_) => "review.delivered",
             Self::PreviewAttached(_) => "preview.attached",
+            Self::WorktreeRemoved(_) => "worktree.removed",
             Self::TaskArchived(_) => "task.archived",
             Self::ProviderFailed(_) => "provider.failed",
         }
@@ -138,12 +156,14 @@ impl TaskEvent {
             Self::TaskCreated(event) => event.occurred_at,
             Self::WorktreeAttached(event) => event.occurred_at,
             Self::TerminalStarted(event) => event.occurred_at,
+            Self::TerminalStopped(event) => event.occurred_at,
             Self::AgentStarted(event) => event.occurred_at,
             Self::AgentStatusChanged(event) => event.update.observed_at,
             Self::ChangedFilesUpdated(event) => event.occurred_at,
             Self::ReviewCommentAdded(event) => event.comment.created_at,
             Self::ReviewDelivered(event) => event.occurred_at,
             Self::PreviewAttached(event) => event.occurred_at,
+            Self::WorktreeRemoved(event) => event.occurred_at,
             Self::TaskArchived(event) => event.occurred_at,
             Self::ProviderFailed(event) => event.occurred_at,
         }

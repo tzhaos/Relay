@@ -91,6 +91,17 @@ where
     pub fn changed_files(&self, worktree_path: &Path) -> ProjectResult<Vec<ChangedFile>> {
         Ok(self.provider.changed_files(worktree_path)?)
     }
+
+    pub fn remove_task_worktree(
+        &self,
+        project: &Project,
+        worktree_path: &Path,
+        force: bool,
+    ) -> ProjectResult<()> {
+        Ok(self
+            .provider
+            .remove_worktree(&project.root, worktree_path, force)?)
+    }
 }
 
 #[cfg(test)]
@@ -104,6 +115,7 @@ mod tests {
     #[derive(Default)]
     struct FakeProvider {
         create_requests: RefCell<Vec<CreateWorktree>>,
+        remove_requests: RefCell<Vec<(PathBuf, PathBuf, bool)>>,
     }
 
     impl WorktreeProvider for FakeProvider {
@@ -130,10 +142,15 @@ mod tests {
 
         fn remove_worktree(
             &self,
-            _repo_root: &Path,
-            _worktree_path: &Path,
-            _force: bool,
+            repo_root: &Path,
+            worktree_path: &Path,
+            force: bool,
         ) -> WorktreeResult<()> {
+            self.remove_requests.borrow_mut().push((
+                repo_root.to_path_buf(),
+                worktree_path.to_path_buf(),
+                force,
+            ));
             Ok(())
         }
 
@@ -165,5 +182,24 @@ mod tests {
 
         assert_eq!(snapshot.branch, "relay/build-pty-runtime");
         assert!(snapshot.path.ends_with("build-pty-runtime"));
+    }
+
+    #[test]
+    fn project_service_should_remove_task_worktree_through_provider() {
+        let provider = FakeProvider::default();
+        let service = ProjectService::new(provider);
+        let project = service
+            .open_repo(Path::new("F:/Workspace/Relay"))
+            .expect("repo should open");
+        let worktree_path = PathBuf::from("F:/Workspace/.relay-worktrees/task");
+
+        service
+            .remove_task_worktree(&project, &worktree_path, false)
+            .expect("worktree should remove");
+
+        assert_eq!(
+            service.provider.remove_requests.borrow().as_slice(),
+            [(PathBuf::from("F:/Workspace/Relay"), worktree_path, false)]
+        );
     }
 }

@@ -11,7 +11,7 @@ use crate::{
     task_event::{
         AgentStarted, AgentStatusChanged, ChangedFilesUpdated, PreviewAttached, ProviderFailed,
         ReviewCommentAdded, ReviewDelivered, TaskArchived, TaskCreated, TaskEvent, TerminalStarted,
-        WorktreeAttached,
+        TerminalStopped, WorktreeAttached, WorktreeRemoved,
     },
 };
 
@@ -269,6 +269,16 @@ impl Task {
                     occurred_at: now,
                 })])
             }
+            TaskCommand::StopTerminal { now } => {
+                self.ensure_not_archived()?;
+                if self.terminal_session_id.is_none() {
+                    return Err(TaskError::MissingTerminal);
+                }
+                Ok(vec![TaskEvent::TerminalStopped(TerminalStopped {
+                    task_id: self.id,
+                    occurred_at: now,
+                })])
+            }
             TaskCommand::AttachAgent {
                 id,
                 kind,
@@ -332,6 +342,16 @@ impl Task {
                     occurred_at: now,
                 })])
             }
+            TaskCommand::RemoveWorktree { now } => {
+                self.ensure_not_archived()?;
+                if self.worktree.is_none() {
+                    return Err(TaskError::MissingWorktree);
+                }
+                Ok(vec![TaskEvent::WorktreeRemoved(WorktreeRemoved {
+                    task_id: self.id,
+                    occurred_at: now,
+                })])
+            }
             TaskCommand::Archive { now } => {
                 if self.status == TaskStatus::Archived {
                     return Err(TaskError::InvalidStatus(self.status));
@@ -367,6 +387,11 @@ impl Task {
             TaskEvent::TerminalStarted(event) => {
                 self.terminal_session_id = Some(event.id);
                 self.status = TaskStatus::ReadyForAgent;
+                self.touch(event.occurred_at);
+            }
+            TaskEvent::TerminalStopped(event) => {
+                self.terminal_session_id = None;
+                self.agent_session_id = None;
                 self.touch(event.occurred_at);
             }
             TaskEvent::AgentStarted(event) => {
@@ -423,6 +448,12 @@ impl Task {
                 self.preview_targets.push(event.target.clone());
                 self.touch(event.occurred_at);
             }
+            TaskEvent::WorktreeRemoved(event) => {
+                self.worktree = None;
+                self.changed_files.clear();
+                self.preview_targets.clear();
+                self.touch(event.occurred_at);
+            }
             TaskEvent::TaskArchived(event) => {
                 self.status = TaskStatus::Archived;
                 self.touch(event.occurred_at);
@@ -463,6 +494,14 @@ impl Task {
             Ok(())
         } else {
             Err(TaskError::InvalidStatus(self.status))
+        }
+    }
+
+    fn ensure_not_archived(&self) -> TaskResult<()> {
+        if self.status == TaskStatus::Archived {
+            Err(TaskError::InvalidStatus(self.status))
+        } else {
+            Ok(())
         }
     }
 
@@ -651,6 +690,61 @@ mod tests {
             .expect_err("archived task is immutable");
 
         assert_eq!(error, TaskError::InvalidStatus(TaskStatus::Archived));
+    }
+
+    #[test]
+    fn remove_worktree_should_clear_worktree_runtime_context() {
+        let (mut task, mut log) = create_task("Remove worktree");
+        attach_worktree(&mut task, &mut log);
+        apply_command(
+            &mut task,
+            &mut log,
+            TaskCommand::RefreshChangedFiles {
+                files: vec![ChangedFile {
+                    path: "src/lib.rs".to_string(),
+                    status: ChangeStatus::Modified,
+                }],
+                now: now(),
+            },
+        );
+        apply_command(
+            &mut task,
+            &mut log,
+            TaskCommand::AttachPreview {
+                target: crate::PreviewTarget {
+                    id: crate::PreviewTargetId::new(),
+                    label: "src/lib.rs".to_string(),
+                    uri: "file:///repo/worktree/src/lib.rs".to_string(),
+                },
+                now: now(),
+            },
+        );
+
+        apply_command(
+            &mut task,
+            &mut log,
+            TaskCommand::RemoveWorktree { now: now() },
+        );
+
+        assert!(task.worktree.is_none());
+        assert!(task.changed_files.is_empty());
+        assert!(task.preview_targets.is_empty());
+    }
+
+    #[test]
+    fn stop_terminal_should_clear_runtime_sessions() {
+        let (mut task, mut log) = create_task("Stop terminal");
+        attach_worktree(&mut task, &mut log);
+        attach_terminal_and_agent(&mut task, &mut log);
+
+        apply_command(
+            &mut task,
+            &mut log,
+            TaskCommand::StopTerminal { now: now() },
+        );
+
+        assert!(task.terminal_session_id.is_none());
+        assert!(task.agent_session_id.is_none());
     }
 
     #[test]

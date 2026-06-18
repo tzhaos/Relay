@@ -28,6 +28,9 @@ pub enum TaskCommand {
         id: TerminalSessionId,
         now: Timestamp,
     },
+    StopTerminal {
+        now: Timestamp,
+    },
     AttachAgent {
         id: AgentSessionId,
         kind: AgentKind,
@@ -45,6 +48,9 @@ pub enum TaskCommand {
     },
     AttachPreview {
         target: PreviewTarget,
+        now: Timestamp,
+    },
+    RemoveWorktree {
         now: Timestamp,
     },
     Archive {

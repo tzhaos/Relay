@@ -53,6 +53,11 @@ pub struct RelayRuntime {
     worktrees_root: PathBuf,
 }
 
+struct ArchiveWorktreeCleanup {
+    clear_task_worktree: bool,
+    remove_worktree: Option<(Project, PathBuf)>,
+}
+
 impl RelayRuntime {
     pub fn open(database: RelayDatabase, paths: &RelayPaths) -> Result<Self> {
         Self::open_with_agent_registry(database, paths, AgentRegistry::built_in())
@@ -286,11 +291,46 @@ impl RelayRuntime {
             .task_repository()
             .load_task(task_id)?
             .context("task not found")?;
+        if task.status == TaskStatus::Archived {
+            task.handle(TaskCommand::Archive {
+                now: OffsetDateTime::now_utc(),
+            })?;
+        }
         let terminal_session_id = task.terminal_session_id;
-        let events = task.handle(TaskCommand::Archive {
+        let cleanup = self.prepare_worktree_archive_cleanup(&task)?;
+
+        if let Some(session_id) = terminal_session_id
+            && self.terminal_runtime.has_session(session_id)
+        {
+            self.terminal_runtime.kill(session_id)?;
+        }
+
+        if let Some((project, worktree_path)) = &cleanup.remove_worktree {
+            self.project_service
+                .remove_task_worktree(project, worktree_path, false)?;
+        }
+
+        let mut events = Vec::new();
+        if cleanup.clear_task_worktree {
+            let worktree_events = task.handle(TaskCommand::RemoveWorktree {
+                now: OffsetDateTime::now_utc(),
+            })?;
+            apply_events(&mut task, &worktree_events)?;
+            events.extend(worktree_events);
+        }
+        if terminal_session_id.is_some() {
+            let terminal_events = task.handle(TaskCommand::StopTerminal {
+                now: OffsetDateTime::now_utc(),
+            })?;
+            apply_events(&mut task, &terminal_events)?;
+            events.extend(terminal_events);
+        }
+        let archive_events = task.handle(TaskCommand::Archive {
             now: OffsetDateTime::now_utc(),
         })?;
-        apply_events(&mut task, &events)?;
+        apply_events(&mut task, &archive_events)?;
+        events.extend(archive_events);
+
         let projection = TaskProjection::from_task(&task);
         {
             let mut repository = self.database.task_repository();
@@ -300,9 +340,6 @@ impl RelayRuntime {
 
         if let Some(session_id) = terminal_session_id {
             self.terminal_task_ids.remove(&session_id);
-            if self.terminal_runtime.has_session(session_id) {
-                self.terminal_runtime.kill(session_id)?;
-            }
         }
 
         self.list_task_projections()
@@ -783,6 +820,52 @@ impl RelayRuntime {
             .clone()
             .context("open a project before using project task features")
     }
+
+    fn prepare_worktree_archive_cleanup(&self, task: &Task) -> Result<ArchiveWorktreeCleanup> {
+        let Some(worktree) = task.worktree.as_ref() else {
+            return Ok(ArchiveWorktreeCleanup {
+                clear_task_worktree: false,
+                remove_worktree: None,
+            });
+        };
+
+        let worktree_path = PathBuf::from(&worktree.path);
+        if !worktree_path.exists() {
+            return Ok(ArchiveWorktreeCleanup {
+                clear_task_worktree: true,
+                remove_worktree: None,
+            });
+        }
+
+        let project = self.require_project()?;
+        if !self.is_managed_task_worktree(&project, &worktree_path)? {
+            return Ok(ArchiveWorktreeCleanup {
+                clear_task_worktree: false,
+                remove_worktree: None,
+            });
+        }
+
+        let changed_files = self.project_service.changed_files(&worktree_path)?;
+        if !changed_files.is_empty() {
+            return Err(anyhow!(
+                "worktree has uncommitted changes: {}",
+                worktree_path.display()
+            ));
+        }
+
+        Ok(ArchiveWorktreeCleanup {
+            clear_task_worktree: true,
+            remove_worktree: Some((project, worktree_path)),
+        })
+    }
+
+    fn is_managed_task_worktree(&self, project: &Project, worktree_path: &Path) -> Result<bool> {
+        let managed_root = self.worktrees_root.join(project.id.to_string());
+        let managed_root = canonicalize_if_exists(&managed_root)?;
+        let worktree_path = canonicalize_if_exists(worktree_path)?;
+
+        Ok(worktree_path.starts_with(managed_root))
+    }
 }
 
 impl TaskDataSource for RelayRuntime {
@@ -990,6 +1073,16 @@ fn resolve_worktree_file_path(worktree_path: &Path, relative_path: &str) -> Resu
     }
 
     Ok(file)
+}
+
+fn canonicalize_if_exists(path: &Path) -> Result<PathBuf> {
+    if path.exists() {
+        return path
+            .canonicalize()
+            .with_context(|| format!("failed to canonicalize {}", path.display()));
+    }
+
+    Ok(path.to_path_buf())
 }
 
 fn worktree_file_uri(path: &Path) -> Result<String> {
@@ -1788,7 +1881,7 @@ mod tests {
     }
 
     #[test]
-    fn archive_task_should_persist_status_and_stop_terminal() {
+    fn archive_task_should_remove_clean_worktree_and_stop_terminal() {
         let temp = tempdir().expect("tempdir should exist");
         let repo = init_git_repo(temp.path().join("repo"));
         let paths = RelayPaths {
@@ -1815,6 +1908,11 @@ mod tests {
         let session_id = tasks[0]
             .terminal_session_id
             .expect("terminal should be attached");
+        let worktree_path = tasks[0]
+            .worktree_path
+            .as_ref()
+            .map(PathBuf::from)
+            .expect("worktree should be attached");
 
         let tasks = runtime
             .archive_task_for_task(task_id)
@@ -1836,8 +1934,76 @@ mod tests {
 
         assert_eq!(task.status, TaskStatus::Archived);
         assert_eq!(persisted.status, TaskStatus::Archived);
+        assert!(task.worktree_path.is_none());
+        assert!(!task.has_terminal);
+        assert!(persisted.worktree.is_none());
+        assert!(persisted.terminal_session_id.is_none());
+        assert!(
+            !worktree_path.exists(),
+            "archiving should remove the clean task worktree"
+        );
         assert!(terminal.exited, "archiving should stop the task terminal");
         assert!(!runtime.terminal_task_ids.contains_key(&session_id));
+    }
+
+    #[test]
+    fn archive_task_should_reject_dirty_worktree_without_archiving() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Archive dirty worktree")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+        let session_id = tasks[0]
+            .terminal_session_id
+            .expect("terminal should be attached");
+        let worktree_path = tasks[0]
+            .worktree_path
+            .as_ref()
+            .map(PathBuf::from)
+            .expect("worktree should be attached");
+        fs::write(worktree_path.join("dirty.txt"), "changed\n").expect("file should write");
+
+        let error = runtime
+            .archive_task_for_task(task_id)
+            .expect_err("dirty worktree should block archive");
+        let persisted = runtime
+            .database
+            .task_repository()
+            .load_task(task_id)
+            .expect("task should load")
+            .expect("task should exist");
+        let terminal = runtime
+            .terminal_runtime
+            .snapshot(session_id)
+            .expect("terminal snapshot should remain inspectable");
+
+        assert!(
+            error.to_string().contains("uncommitted changes"),
+            "unexpected error: {error}"
+        );
+        assert_ne!(persisted.status, TaskStatus::Archived);
+        assert!(persisted.worktree.is_some());
+        assert!(worktree_path.exists());
+        assert!(!terminal.exited, "dirty archive should keep terminal alive");
+        assert!(runtime.terminal_task_ids.contains_key(&session_id));
     }
 
     #[test]

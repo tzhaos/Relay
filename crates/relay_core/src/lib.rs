@@ -19,7 +19,7 @@ pub use task::{
 pub use task_event::{
     AgentStarted, AgentStatusChanged, ChangedFilesUpdated, PreviewAttached, ProviderFailed,
     ReviewCommentAdded, ReviewDelivered, TaskArchived, TaskCreated, TaskEvent, TerminalStarted,
-    WorktreeAttached,
+    TerminalStopped, WorktreeAttached, WorktreeRemoved,
 };
 pub use task_projection::{
     DiffFileProjection, DiffHunkProjection, DiffLineProjection, DiffLineProjectionKind,
