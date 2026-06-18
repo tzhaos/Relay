@@ -1,7 +1,10 @@
-use gpui::{IntoElement, div, prelude::*};
+use gpui::{IntoElement, div, prelude::*, px};
 use relay_core::TerminalSessionId;
 
-use crate::theme::RelayTheme;
+use crate::{
+    theme::RelayTheme,
+    workbench::{PaneRoute, WorkspaceViewModel},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalPaneProjection {
@@ -24,7 +27,11 @@ impl TerminalPaneProjection {
     }
 }
 
-pub fn terminal_pane(theme: RelayTheme, projection: &TerminalPaneProjection) -> impl IntoElement {
+pub fn terminal_pane(
+    theme: RelayTheme,
+    view_model: &WorkspaceViewModel,
+    projection: &TerminalPaneProjection,
+) -> impl IntoElement {
     let status = if projection.exited {
         "EXITED"
     } else if projection.session_id.is_some() {
@@ -52,16 +59,36 @@ pub fn terminal_pane(theme: RelayTheme, projection: &TerminalPaneProjection) -> 
         .flex_1()
         .h_full()
         .bg(theme.bg)
-        .p_4()
         .flex()
         .flex_col()
-        .gap_3()
         .child(
             div()
+                .h(px(42.0))
+                .px_3()
                 .flex()
                 .items_center()
                 .justify_between()
-                .child(div().text_sm().text_color(theme.muted).child("TERMINAL"))
+                .border_b_1()
+                .border_color(theme.line)
+                .bg(theme.chrome)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(route_tab(
+                            theme,
+                            view_model.pane_route,
+                            PaneRoute::Terminal,
+                            "Terminal",
+                        ))
+                        .child(route_tab(
+                            theme,
+                            view_model.pane_route,
+                            PaneRoute::Preview,
+                            "Preview",
+                        )),
+                )
                 .child(
                     div()
                         .text_xs()
@@ -77,19 +104,18 @@ pub fn terminal_pane(theme: RelayTheme, projection: &TerminalPaneProjection) -> 
         .child(
             div()
                 .flex_1()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.line)
-                .bg(theme.panel)
-                .p_4()
+                .bg(theme.bg)
                 .flex()
                 .flex_col()
-                .gap_3()
                 .child(
                     div()
+                        .h(px(40.0))
+                        .px_4()
                         .flex()
                         .items_center()
                         .justify_between()
+                        .border_b_1()
+                        .border_color(theme.line)
                         .child(div().text_color(theme.text).child(title))
                         .child(div().text_sm().text_color(theme.muted).child(cwd)),
                 )
@@ -97,13 +123,39 @@ pub fn terminal_pane(theme: RelayTheme, projection: &TerminalPaneProjection) -> 
                     div()
                         .flex_1()
                         .font_family("Consolas")
-                        .text_color(theme.text)
-                        .bg(theme.panel_alt)
-                        .border_1()
-                        .border_color(theme.line)
-                        .rounded_md()
-                        .p_3()
+                        .text_color(theme.terminal_text)
+                        .bg(theme.terminal_bg)
+                        .p_4()
                         .child(scrollback),
                 ),
         )
+}
+
+fn route_tab(
+    theme: RelayTheme,
+    active_route: PaneRoute,
+    route: PaneRoute,
+    label: &'static str,
+) -> impl IntoElement {
+    div()
+        .px_3()
+        .py_1()
+        .border_1()
+        .border_color(if active_route == route {
+            theme.selection_line
+        } else {
+            theme.line
+        })
+        .bg(if active_route == route {
+            theme.panel
+        } else {
+            theme.chrome
+        })
+        .text_sm()
+        .text_color(if active_route == route {
+            theme.text
+        } else {
+            theme.muted
+        })
+        .child(label)
 }

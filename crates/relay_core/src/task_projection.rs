@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ids::{TaskId, TerminalSessionId},
-    task::{AgentKind, Task, TaskStatus, Timestamp},
+    task::{AgentKind, ChangedFile, Task, TaskStatus, Timestamp},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +27,7 @@ pub struct TaskProjection {
     pub has_terminal: bool,
     pub terminal_session_id: Option<TerminalSessionId>,
     pub worktree_path: Option<String>,
+    pub changed_files: Vec<ChangedFile>,
     pub changed_file_count: usize,
     pub review_comment_count: usize,
     pub pending_review_comment_count: usize,
@@ -57,6 +58,7 @@ impl TaskProjection {
             has_terminal: task.terminal_session_id.is_some(),
             terminal_session_id: task.terminal_session_id,
             worktree_path: task.worktree.as_ref().map(|worktree| worktree.path.clone()),
+            changed_files: task.changed_files.clone(),
             changed_file_count: task.changed_files.len(),
             review_comment_count: comment_count,
             pending_review_comment_count: comment_count.saturating_sub(delivered),

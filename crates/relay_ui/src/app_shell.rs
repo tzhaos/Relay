@@ -4,24 +4,27 @@ use gpui::{
 };
 use relay_core::{
     AgentKind, AgentRuntimeStatus, AgentSessionId, AgentStatusUpdate, ChangeStatus, ChangedFile,
-    CreateTask, PreviewTarget, PreviewTargetId, ProjectId, ReviewComment, ReviewCommentId,
-    StatusTone, Task, TaskCommand, TaskProjection, TaskSource, TerminalSessionId, Timestamp,
-    WorktreeId, WorktreeSnapshot,
+    CreateTask, PreviewTarget, PreviewTargetId, ProjectId, ReviewComment, ReviewCommentId, Task,
+    TaskCommand, TaskProjection, TaskSource, TerminalSessionId, Timestamp, WorktreeId,
+    WorktreeSnapshot,
 };
 
 use crate::{
+    diff_pane::context_pane,
+    task_list::task_list,
     terminal_pane::{TerminalPaneProjection, terminal_pane},
     theme::RelayTheme,
+    workbench::WorkspaceViewModel,
 };
 
 pub struct AppShell {
     theme: RelayTheme,
-    tasks: Vec<TaskProjection>,
+    view_model: WorkspaceViewModel,
 }
 
 impl AppShell {
     pub fn open(cx: &mut App) -> anyhow::Result<()> {
-        let bounds = Bounds::centered(None, size(px(1320.0), px(820.0)), cx);
+        let bounds = Bounds::centered(None, size(px(1180.0), px(780.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -37,7 +40,7 @@ impl AppShell {
     fn new() -> Self {
         Self {
             theme: RelayTheme::dark(),
-            tasks: demo_task_projections(),
+            view_model: WorkspaceViewModel::new(demo_task_projections()),
         }
     }
 
@@ -50,7 +53,7 @@ impl AppShell {
             .px_4()
             .border_b_1()
             .border_color(self.theme.line)
-            .bg(self.theme.panel)
+            .bg(self.theme.chrome_alt)
             .child(
                 div()
                     .flex()
@@ -62,93 +65,23 @@ impl AppShell {
                             .text_color(self.theme.text)
                             .child("Relay"),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(self.theme.muted)
-                            .child("Rust-native agent workbench"),
-                    ),
+                    .child(div().text_sm().text_color(self.theme.muted).child(format!(
+                        "{} / {}",
+                        self.view_model.project_label, self.view_model.branch_label
+                    ))),
             )
             .child(
-                div()
-                    .text_sm()
-                    .text_color(self.theme.muted)
-                    .child("Zed-like surface / Orca-like workflow"),
-            )
-    }
-
-    fn task_list(&self) -> impl IntoElement {
-        let mut list = div().flex().flex_col().gap_2();
-        for task in &self.tasks {
-            list = list.child(self.task_row(task));
-        }
-
-        div()
-            .w(px(286.0))
-            .h_full()
-            .border_r_1()
-            .border_color(self.theme.line)
-            .bg(self.theme.panel)
-            .p_3()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(self.theme.muted)
-                    .child("TASKS / WORKTREES"),
-            )
-            .child(list)
-    }
-
-    fn task_row(&self, task: &TaskProjection) -> impl IntoElement {
-        let status_color = match task.status_tone {
-            StatusTone::Accent => self.theme.accent,
-            StatusTone::Warning => self.theme.warning,
-            StatusTone::Danger => self.theme.danger,
-            StatusTone::Muted => self.theme.muted,
-            StatusTone::Neutral => self.theme.text,
-        };
-
-        div()
-            .rounded_md()
-            .border_1()
-            .border_color(self.theme.line)
-            .bg(self.theme.panel_alt)
-            .p_3()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .text_color(self.theme.text)
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .child(task.title.clone()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(self.theme.muted)
-                            .child(task.meta.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(status_color)
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(task.status_label.clone()),
-                    ),
+                div().flex().items_center().gap_3().child(
+                    div()
+                        .text_sm()
+                        .text_color(self.theme.muted)
+                        .child("New task / Agent / Review"),
+                ),
             )
     }
 
     fn terminal_projection(&self) -> TerminalPaneProjection {
-        let Some(active_task) = self.tasks.first() else {
+        let Some(active_task) = self.view_model.active_task() else {
             return TerminalPaneProjection::detached();
         };
 
@@ -174,67 +107,6 @@ impl AppShell {
             exited: false,
         }
     }
-
-    fn context_pane(&self) -> impl IntoElement {
-        let active_task = self.tasks.first();
-        let changed_files = active_task
-            .map(|task| task.changed_file_count.to_string())
-            .unwrap_or_else(|| "0".to_string());
-        let review_comments = active_task
-            .map(|task| task.review_comment_count.to_string())
-            .unwrap_or_else(|| "0".to_string());
-        let preview_targets = active_task
-            .map(|task| task.preview_target_count.to_string())
-            .unwrap_or_else(|| "0".to_string());
-
-        div()
-            .w(px(360.0))
-            .h_full()
-            .border_l_1()
-            .border_color(self.theme.line)
-            .bg(self.theme.panel)
-            .p_3()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(self.theme.muted)
-                    .child("FILES / DIFF / REVIEW"),
-            )
-            .child(self.context_row("Changed files", changed_files))
-            .child(self.context_row("Review comments", review_comments))
-            .child(self.context_row("Preview targets", preview_targets))
-            .child(
-                div()
-                    .mt_4()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(self.theme.line)
-                    .bg(self.theme.panel_alt)
-                    .p_3()
-                    .text_color(self.theme.muted)
-                    .child("Task projection is now fed by relay_core event replay."),
-            )
-    }
-
-    fn context_row(&self, label: &'static str, value: String) -> impl IntoElement {
-        div()
-            .flex()
-            .justify_between()
-            .items_center()
-            .border_b_1()
-            .border_color(self.theme.line)
-            .py_2()
-            .child(div().text_color(self.theme.muted).child(label))
-            .child(
-                div()
-                    .text_color(self.theme.text)
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(value),
-            )
-    }
 }
 
 impl Render for AppShell {
@@ -249,9 +121,13 @@ impl Render for AppShell {
                 div()
                     .flex()
                     .flex_1()
-                    .child(self.task_list())
-                    .child(terminal_pane(self.theme, &self.terminal_projection()))
-                    .child(self.context_pane()),
+                    .child(task_list(self.theme, &self.view_model))
+                    .child(terminal_pane(
+                        self.theme,
+                        &self.view_model,
+                        &self.terminal_projection(),
+                    ))
+                    .child(context_pane(self.theme, &self.view_model)),
             )
     }
 }
