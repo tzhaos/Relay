@@ -27,15 +27,11 @@ pub struct AppShell {
 pub trait TaskDataSource {
     fn create_task(&mut self, title: &str) -> anyhow::Result<Vec<TaskProjection>>;
     fn launch_agent(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
-    fn poll_runtime(&mut self) -> anyhow::Result<bool> {
-        Ok(false)
-    }
+    fn poll_runtime(&mut self) -> anyhow::Result<bool>;
     fn terminal_projection(
         &mut self,
-        _session_id: TerminalSessionId,
-    ) -> anyhow::Result<Option<TerminalPaneProjection>> {
-        Ok(None)
-    }
+        session_id: TerminalSessionId,
+    ) -> anyhow::Result<Option<TerminalPaneProjection>>;
 }
 
 impl AppShell {
