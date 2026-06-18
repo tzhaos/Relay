@@ -1,5 +1,6 @@
 use gpui::{
-    Context, InteractiveElement, IntoElement, StatefulInteractiveElement, div, prelude::*, px,
+    Context, CursorStyle, FocusHandle, InteractiveElement, IntoElement, StatefulInteractiveElement,
+    div, prelude::*, px,
 };
 use relay_core::{ChangeStatus, ChangedFile, ReviewCommentProjection, TaskProjection};
 use relay_diff::{DiffTree, DiffTreeRow, DiffTreeRowKind};
@@ -13,45 +14,146 @@ use crate::{
 pub fn context_pane(
     theme: RelayTheme,
     view_model: &WorkspaceViewModel,
+    filter_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
     let active_task = view_model.active_task();
+    let filter = view_model.context_filter.as_str();
 
     div()
-        .w(px(340.0))
+        .w(px(380.0))
         .h_full()
         .border_l_1()
         .border_color(theme.line)
         .bg(theme.chrome)
         .flex()
         .flex_col()
-        .child(header(theme, view_model.context_tab, cx))
+        .child(header(
+            theme,
+            view_model.context_tab,
+            filter,
+            filter_focus,
+            cx,
+        ))
         .child(match view_model.context_tab {
-            ContextTab::Files => files_tab(theme, active_task),
-            ContextTab::Diff => diff_tab(theme, active_task),
-            ContextTab::Review => review_tab(theme, active_task),
+            ContextTab::Files => files_tab(theme, active_task, filter),
+            ContextTab::Diff => diff_tab(theme, active_task, filter),
+            ContextTab::Review => review_tab(theme, active_task, filter),
         })
 }
 
-fn header(theme: RelayTheme, active_tab: ContextTab, cx: &mut Context<AppShell>) -> gpui::Div {
+fn header(
+    theme: RelayTheme,
+    active_tab: ContextTab,
+    filter: &str,
+    filter_focus: &FocusHandle,
+    cx: &mut Context<AppShell>,
+) -> gpui::Div {
     div()
-        .h(px(42.0))
         .px_3()
+        .py_2()
         .flex()
-        .items_center()
-        .justify_between()
+        .flex_col()
+        .gap_2()
         .border_b_1()
         .border_color(theme.line)
-        .child(div().text_color(theme.text).child("Context"))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap_1()
+                .justify_between()
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.text)
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child("Context"),
+                )
+                .child(
+                    div()
+                        .rounded_sm()
+                        .bg(theme.chrome_alt)
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .text_color(theme.muted)
+                        .child(active_tab.label()),
+                ),
+        )
+        .child(search_field(theme, filter, filter_focus, cx))
+        .child(
+            div()
+                .h(px(32.0))
+                .rounded_md()
+                .bg(theme.chrome_alt)
+                .p_0p5()
+                .flex()
+                .items_center()
                 .child(tab(theme, active_tab, ContextTab::Files, "Files", cx))
                 .child(tab(theme, active_tab, ContextTab::Diff, "Diff", cx))
                 .child(tab(theme, active_tab, ContextTab::Review, "Review", cx)),
         )
+}
+
+fn search_field(
+    theme: RelayTheme,
+    filter: &str,
+    filter_focus: &FocusHandle,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
+    let focus_handle = filter_focus.clone();
+    let label = if filter.is_empty() {
+        "Filter files".to_string()
+    } else {
+        filter.to_string()
+    };
+
+    div()
+        .h(px(32.0))
+        .rounded_md()
+        .border_1()
+        .border_color(if filter.is_empty() {
+            theme.line
+        } else {
+            theme.selection_line
+        })
+        .bg(theme.panel)
+        .px_3()
+        .flex()
+        .items_center()
+        .gap_2()
+        .text_sm()
+        .text_color(if filter.is_empty() {
+            theme.muted
+        } else {
+            theme.text
+        })
+        .track_focus(filter_focus)
+        .tab_index(0)
+        .cursor(CursorStyle::IBeam)
+        .key_context("ContextFilter")
+        .hover(|style| style.border_color(theme.selection_line))
+        .on_key_down(cx.listener(|this, event, _, cx| {
+            if this.handle_context_filter_key(event, cx) {
+                cx.stop_propagation();
+            }
+        }))
+        .id("context-filter")
+        .on_click(cx.listener(move |_, _: &gpui::ClickEvent, window, _| {
+            window.focus(&focus_handle);
+        }))
+        .child(search_glyph(theme))
+        .child(div().min_w_0().truncate().child(label))
+}
+
+fn search_glyph(theme: RelayTheme) -> gpui::Div {
+    div()
+        .w(px(14.0))
+        .h(px(14.0))
+        .rounded_md()
+        .border_1()
+        .border_color(theme.muted)
 }
 
 fn tab(
@@ -62,13 +164,20 @@ fn tab(
     cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
     div()
+        .h(px(28.0))
+        .flex_1()
         .px_2()
-        .py_1()
-        .rounded_md()
-        .bg(if active_tab == tab {
+        .rounded_sm()
+        .border_1()
+        .border_color(if active_tab == tab {
             theme.selection
         } else {
-            theme.chrome
+            theme.chrome_alt
+        })
+        .bg(if active_tab == tab {
+            theme.panel
+        } else {
+            theme.chrome_alt
         })
         .text_sm()
         .text_color(if active_tab == tab {
@@ -77,6 +186,10 @@ fn tab(
             theme.muted
         })
         .cursor_pointer()
+        .hover(|style| style.bg(theme.panel))
+        .flex()
+        .items_center()
+        .justify_center()
         .id(("context-tab", tab.index()))
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
             this.dispatch(WorkbenchCommand::SetContextTab(tab), cx);
@@ -85,6 +198,14 @@ fn tab(
 }
 
 impl ContextTab {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Files => "Files",
+            Self::Diff => "Diff",
+            Self::Review => "Review",
+        }
+    }
+
     fn index(self) -> usize {
         match self {
             Self::Files => 0,
@@ -94,11 +215,14 @@ impl ContextTab {
     }
 }
 
-fn files_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
+fn files_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> gpui::Div {
     let mut rows = div().flex().flex_col().gap_1();
+    let mut row_count = 0;
     if let Some(task) = task {
-        let tree = DiffTree::from_changed_files(&task.changed_files);
+        let changed_files = filtered_changed_files(task, filter);
+        let tree = DiffTree::from_changed_files(&changed_files);
         for row in &tree.rows {
+            row_count += 1;
             rows = rows.child(tree_row(theme, row));
         }
     }
@@ -110,13 +234,20 @@ fn files_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
         .flex_col()
         .gap_3()
         .child(summary(theme, task))
-        .child(rows)
+        .child(if row_count == 0 {
+            empty_state(theme, "No matching files", "File list is empty.")
+        } else {
+            rows
+        })
 }
 
-fn diff_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
+fn diff_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> gpui::Div {
     let mut hunks = div().flex().flex_col().gap_2();
+    let mut hunk_count = 0;
     if let Some(task) = task {
-        for file in &task.changed_files {
+        let changed_files = filtered_changed_files(task, filter);
+        for file in &changed_files {
+            hunk_count += 1;
             hunks = hunks.child(hunk_card(theme, file));
         }
     }
@@ -134,25 +265,31 @@ fn diff_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
                 .items_center()
                 .justify_between()
                 .text_color(theme.text)
-                .child("Hunks")
+                .child("Changed files")
                 .child(
                     div()
                         .text_xs()
                         .text_color(theme.muted)
-                        .child("refresh preserves review history"),
+                        .child(hunk_count.to_string()),
                 ),
         )
-        .child(hunks)
+        .child(if hunk_count == 0 {
+            empty_state(theme, "No matching diffs", "Changed file list is empty.")
+        } else {
+            hunks
+        })
 }
 
-fn review_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
-    let review_count = task.map_or(0, |task| task.review_comment_count);
-    let pending_count = task.map_or(0, |task| task.pending_review_comment_count);
+fn review_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> gpui::Div {
+    let review_comments = filtered_review_comments(task, filter);
+    let review_count = review_comments.len();
+    let pending_count = review_comments
+        .iter()
+        .filter(|comment| !comment.delivered)
+        .count();
     let mut comments = div().flex().flex_col().gap_2();
-    if let Some(task) = task {
-        for comment in &task.review_comments {
-            comments = comments.child(review_comment(theme, comment));
-        }
+    for comment in &review_comments {
+        comments = comments.child(review_comment(theme, comment));
     }
 
     div()
@@ -170,21 +307,13 @@ fn review_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
         ))
         .child(
             div()
-                .rounded_sm()
-                .border_1()
+                .border_b_1()
                 .border_color(theme.line)
-                .bg(theme.chrome_alt)
-                .px_3()
                 .py_2()
                 .flex()
                 .items_center()
                 .justify_between()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.text)
-                        .child("Send pending notes"),
-                )
+                .child(div().text_sm().text_color(theme.text).child("Delivery"))
                 .child(
                     div()
                         .text_xs()
@@ -197,7 +326,42 @@ fn review_tab(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
                         .child(if pending_count == 0 { "CLEAN" } else { "DIRTY" }),
                 ),
         )
-        .child(comments)
+        .child(if review_count == 0 {
+            empty_state(theme, "No matching review notes", "Review list is empty.")
+        } else {
+            comments
+        })
+}
+
+fn filtered_changed_files(task: &TaskProjection, filter: &str) -> Vec<ChangedFile> {
+    let filter = filter.trim().to_lowercase();
+    if filter.is_empty() {
+        return task.changed_files.clone();
+    }
+
+    task.changed_files
+        .iter()
+        .filter(|file| file.path.to_lowercase().contains(&filter))
+        .cloned()
+        .collect()
+}
+
+fn filtered_review_comments<'a>(
+    task: Option<&'a TaskProjection>,
+    filter: &str,
+) -> Vec<&'a ReviewCommentProjection> {
+    let Some(task) = task else {
+        return Vec::new();
+    };
+    let filter = filter.trim().to_lowercase();
+    task.review_comments
+        .iter()
+        .filter(|comment| {
+            filter.is_empty()
+                || comment.path.to_lowercase().contains(&filter)
+                || comment.body.to_lowercase().contains(&filter)
+        })
+        .collect()
 }
 
 fn summary(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
@@ -209,21 +373,44 @@ fn summary(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
         .unwrap_or_else(|| "DETACHED".to_string());
 
     div()
-        .rounded_md()
-        .border_1()
+        .pb_2()
+        .border_b_1()
         .border_color(theme.line)
-        .bg(theme.chrome_alt)
-        .p_3()
         .flex()
-        .items_center()
-        .justify_between()
-        .child(div().text_color(theme.text).child(title))
+        .flex_col()
+        .gap_1()
         .child(
             div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.text)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme.muted)
+                        .child(status),
+                ),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .font_family("Consolas")
                 .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
                 .text_color(theme.muted)
-                .child(status),
+                .child(
+                    task.map_or_else(|| "No task metadata".to_string(), |task| task.meta.clone()),
+                ),
         )
 }
 
@@ -253,6 +440,8 @@ fn file_row(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
         )
         .child(
             div()
+                .min_w_0()
+                .truncate()
                 .text_sm()
                 .text_color(theme.text)
                 .child(file.path.clone()),
@@ -307,6 +496,8 @@ fn hunk_card(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
                 )
                 .child(
                     div()
+                        .min_w_0()
+                        .truncate()
                         .text_sm()
                         .text_color(theme.text)
                         .child(file.path.clone()),
@@ -317,8 +508,28 @@ fn hunk_card(theme: RelayTheme, file: &ChangedFile) -> gpui::Div {
                 .font_family("Consolas")
                 .text_xs()
                 .text_color(theme.muted)
-                .child(hunk_preview(file.status)),
+                .child(diff_body_state(file.status)),
         )
+}
+
+fn empty_state(theme: RelayTheme, title: &'static str, detail: &'static str) -> gpui::Div {
+    div()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.chrome_alt)
+        .p_3()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.text)
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .child(title),
+        )
+        .child(div().text_xs().text_color(theme.muted).child(detail))
 }
 
 fn review_comment(theme: RelayTheme, comment: &ReviewCommentProjection) -> gpui::Div {
@@ -389,11 +600,11 @@ fn change_label(theme: RelayTheme, status: ChangeStatus) -> (&'static str, gpui:
     }
 }
 
-fn hunk_preview(status: ChangeStatus) -> &'static str {
+fn diff_body_state(status: ChangeStatus) -> &'static str {
     match status {
-        ChangeStatus::Added | ChangeStatus::Untracked => "+ new lines ready for review",
-        ChangeStatus::Modified => "- previous line\n+ updated line",
-        ChangeStatus::Deleted => "- removed lines",
-        ChangeStatus::Renamed => "rename path with content preserved",
+        ChangeStatus::Added | ChangeStatus::Untracked => "content diff pending",
+        ChangeStatus::Modified => "line diff not loaded",
+        ChangeStatus::Deleted => "deleted file body not loaded",
+        ChangeStatus::Renamed => "rename details not loaded",
     }
 }

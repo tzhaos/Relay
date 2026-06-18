@@ -4359,9 +4359,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
+ "relay_core",
  "relay_infra",
  "relay_persistence",
  "relay_ui",
+ "time",
  "tracing",
 ]
 

@@ -42,7 +42,7 @@ pub fn preview_content(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui
                 .gap_3()
                 .child(active_preview_summary(theme, task))
                 .child(targets)
-                .child(context_budget(theme, task)),
+                .child(preview_target_state(theme, task)),
         )
 }
 
@@ -100,14 +100,11 @@ fn preview_target(theme: RelayTheme, target: &PreviewTargetProjection) -> gpui::
         )
 }
 
-fn context_budget(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
+fn preview_target_state(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
     let has_preview = task.is_some_and(|task| !task.preview_targets.is_empty());
     div()
-        .rounded_sm()
-        .border_1()
+        .border_b_1()
         .border_color(theme.line)
-        .bg(theme.chrome_alt)
-        .px_3()
         .py_2()
         .flex()
         .items_center()
@@ -116,7 +113,7 @@ fn context_budget(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div
             div()
                 .text_sm()
                 .text_color(theme.text)
-                .child("Browser context"),
+                .child("Preview target"),
         )
         .child(
             div()
@@ -127,7 +124,7 @@ fn context_budget(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div
                 } else {
                     theme.muted
                 })
-                .child(if has_preview { "SANITIZED" } else { "DETACHED" }),
+                .child(if has_preview { "ATTACHED" } else { "DETACHED" }),
         )
 }
 

@@ -6,7 +6,6 @@ pub struct RelayTheme {
     pub chrome: Hsla,
     pub chrome_alt: Hsla,
     pub panel: Hsla,
-    pub panel_alt: Hsla,
     pub terminal_bg: Hsla,
     pub terminal_text: Hsla,
     pub line: Hsla,
@@ -20,23 +19,22 @@ pub struct RelayTheme {
 }
 
 impl RelayTheme {
-    pub fn dark() -> Self {
+    pub fn orca() -> Self {
         Self {
-            bg: rgb(0xf7f7f6).into(),
-            chrome: rgb(0xf1f1f0).into(),
-            chrome_alt: rgb(0xe7e7e5).into(),
+            bg: rgb(0xf8f8f7).into(),
+            chrome: rgb(0xf3f3f2).into(),
+            chrome_alt: rgb(0xebebe9).into(),
             panel: rgb(0xffffff).into(),
-            panel_alt: rgb(0x252a32).into(),
-            terminal_bg: rgb(0x252a32).into(),
-            terminal_text: rgb(0xf3f4f6).into(),
-            line: rgb(0xd6d6d3).into(),
-            selection: rgb(0xdfdfdd).into(),
-            selection_line: rgb(0xc9c9c5).into(),
-            text: rgb(0x202124).into(),
-            muted: rgb(0x73777f).into(),
-            accent: rgb(0x10b981).into(),
-            warning: rgb(0xb8871f).into(),
-            danger: rgb(0xb5524b).into(),
+            terminal_bg: rgb(0x282d35).into(),
+            terminal_text: rgb(0xf7f7f4).into(),
+            line: rgb(0xdededa).into(),
+            selection: rgb(0xe2e2e0).into(),
+            selection_line: rgb(0xd1d1cd).into(),
+            text: rgb(0x18191c).into(),
+            muted: rgb(0x68707a).into(),
+            accent: rgb(0x05b978).into(),
+            warning: rgb(0xb98208).into(),
+            danger: rgb(0xbb5148).into(),
         }
     }
 }

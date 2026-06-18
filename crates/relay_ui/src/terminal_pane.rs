@@ -40,28 +40,19 @@ pub fn terminal_pane(
     let status = if projection.exited {
         "EXITED"
     } else if projection.session_id.is_some() {
-        "ATTACHED"
+        "SESSION"
     } else {
         "DETACHED"
     };
 
-    let title = projection
-        .title
-        .clone()
-        .unwrap_or_else(|| "Relay terminal".to_string());
     let cwd = if projection.cwd.is_empty() {
         "No worktree attached".to_string()
     } else {
         projection.cwd.clone()
     };
-    let scrollback = if projection.scrollback.is_empty() {
-        "relay $ waiting for terminal runtime...".to_string()
-    } else {
-        projection.scrollback.clone()
-    };
-
     div()
         .flex_1()
+        .min_w_0()
         .h_full()
         .bg(theme.bg)
         .flex()
@@ -78,6 +69,7 @@ pub fn terminal_pane(
                 .bg(theme.chrome)
                 .child(
                     div()
+                        .min_w_0()
                         .flex()
                         .items_center()
                         .gap_1()
@@ -98,53 +90,73 @@ pub fn terminal_pane(
                 )
                 .child(
                     div()
-                        .text_xs()
-                        .text_color(if projection.exited {
-                            theme.muted
-                        } else {
-                            theme.accent
-                        })
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(status),
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .max_w(px(420.0))
+                                .truncate()
+                                .text_sm()
+                                .text_color(theme.muted)
+                                .child(cwd.clone()),
+                        )
+                        .child(
+                            div()
+                                .h(px(24.0))
+                                .px_2()
+                                .rounded_sm()
+                                .bg(if projection.exited {
+                                    theme.chrome_alt
+                                } else {
+                                    theme.selection
+                                })
+                                .text_xs()
+                                .text_color(if projection.exited {
+                                    theme.muted
+                                } else {
+                                    theme.accent
+                                })
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .flex()
+                                .items_center()
+                                .child(status),
+                        ),
                 ),
         )
         .child(match view_model.pane_route {
-            PaneRoute::Terminal => terminal_content(theme, title, cwd, scrollback),
+            PaneRoute::Terminal => terminal_content(theme, projection),
             PaneRoute::Preview => preview_content(theme, view_model.active_task()),
         })
 }
 
-fn terminal_content(
-    theme: RelayTheme,
-    title: String,
-    cwd: String,
-    scrollback: String,
-) -> gpui::Div {
+fn terminal_content(theme: RelayTheme, projection: &TerminalPaneProjection) -> gpui::Div {
+    let body = if projection.scrollback.is_empty() {
+        if projection.session_id.is_some() {
+            "Terminal runtime is not connected.".to_string()
+        } else {
+            "No terminal session attached.".to_string()
+        }
+    } else {
+        projection.scrollback.clone()
+    };
+
     div()
         .flex_1()
-        .bg(theme.bg)
+        .bg(theme.terminal_bg)
         .flex()
         .flex_col()
-        .child(
-            div()
-                .h(px(40.0))
-                .px_4()
-                .flex()
-                .items_center()
-                .justify_between()
-                .border_b_1()
-                .border_color(theme.line)
-                .child(div().text_color(theme.text).child(title))
-                .child(div().text_sm().text_color(theme.muted).child(cwd)),
-        )
+        .min_w_0()
         .child(
             div()
                 .flex_1()
+                .overflow_hidden()
                 .font_family("Consolas")
                 .text_color(theme.terminal_text)
                 .bg(theme.terminal_bg)
                 .p_4()
-                .child(scrollback),
+                .child(body),
         )
 }
 
@@ -156,8 +168,8 @@ fn route_tab(
     cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
     div()
+        .h(px(26.0))
         .px_3()
-        .py_1()
         .border_1()
         .border_color(if active_route == route {
             theme.selection_line
@@ -176,6 +188,7 @@ fn route_tab(
             theme.muted
         })
         .cursor_pointer()
+        .hover(|style| style.bg(theme.panel))
         .id(("pane-route", route.index()))
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
             this.dispatch(WorkbenchCommand::SetPaneRoute(route), cx);

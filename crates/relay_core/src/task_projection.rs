@@ -29,6 +29,8 @@ pub struct TaskProjection {
     pub has_terminal: bool,
     pub terminal_session_id: Option<TerminalSessionId>,
     pub worktree_path: Option<String>,
+    #[serde(default)]
+    pub worktree_branch: Option<String>,
     pub changed_files: Vec<ChangedFile>,
     pub changed_file_count: usize,
     pub review_comments: Vec<ReviewCommentProjection>,
@@ -84,6 +86,10 @@ impl TaskProjection {
             has_terminal: task.terminal_session_id.is_some(),
             terminal_session_id: task.terminal_session_id,
             worktree_path: task.worktree.as_ref().map(|worktree| worktree.path.clone()),
+            worktree_branch: task
+                .worktree
+                .as_ref()
+                .map(|worktree| worktree.branch.clone()),
             changed_files: task.changed_files.clone(),
             changed_file_count: task.changed_files.len(),
             review_comments: task

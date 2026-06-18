@@ -1,4 +1,4 @@
-use relay_core::{AgentKind, TaskId, TaskProjection};
+use relay_core::{TaskId, TaskProjection, TaskStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneRoute {
@@ -15,10 +15,8 @@ pub enum ContextTab {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusTarget {
-    TaskList,
     Terminal,
     ContextPane,
-    CommandPalette,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,11 +24,11 @@ pub enum WorkbenchCommand {
     ActivateTask(TaskId),
     SetPaneRoute(PaneRoute),
     SetContextTab(ContextTab),
-    Focus(FocusTarget),
-    ToggleCommandPalette,
+    SetContextFilter(String),
+    AppendContextFilter(String),
+    BackspaceContextFilter,
+    ClearContextFilter,
     CreateTask,
-    LaunchAgent(AgentKind),
-    SendReviewToAgent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,33 +42,45 @@ pub struct TaskListItem {
     pub task: TaskProjection,
     pub active: bool,
     pub agent_label: String,
+    pub worktree_label: String,
+    pub changed_label: String,
+    pub review_label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceStatusSummary {
+    pub task_count: usize,
+    pub active_count: usize,
+    pub attention_count: usize,
+    pub review_count: usize,
+    pub changed_file_count: usize,
+    pub pending_review_count: usize,
+    pub attached_terminal_count: usize,
+    pub active_agent_count: usize,
+    pub runtime_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceViewModel {
     pub project_label: String,
-    pub branch_label: String,
     pub tasks: Vec<TaskProjection>,
     pub active_task_id: Option<TaskId>,
     pub pane_route: PaneRoute,
     pub context_tab: ContextTab,
+    pub context_filter: String,
     pub focus: FocusTarget,
-    pub command_palette_open: bool,
-    pub last_command: Option<WorkbenchCommand>,
 }
 
 impl WorkspaceViewModel {
     pub fn new(tasks: Vec<TaskProjection>) -> Self {
         Self {
             project_label: "Relay".to_string(),
-            branch_label: "master".to_string(),
             active_task_id: tasks.first().map(|task| task.id),
             tasks,
             pane_route: PaneRoute::Terminal,
             context_tab: ContextTab::Files,
+            context_filter: String::new(),
             focus: FocusTarget::Terminal,
-            command_palette_open: false,
-            last_command: None,
         }
     }
 
@@ -79,41 +89,120 @@ impl WorkspaceViewModel {
         self.tasks.iter().find(|task| task.id == active_task_id)
     }
 
+    pub fn active_worktree_label(&self) -> String {
+        self.active_task()
+            .and_then(|task| task.worktree_path.as_deref())
+            .map(worktree_name)
+            .unwrap_or_else(|| "no worktree".to_string())
+    }
+
+    pub fn active_worktree_path_label(&self) -> String {
+        self.active_task()
+            .and_then(|task| task.worktree_path.as_deref())
+            .map(str::to_string)
+            .unwrap_or_else(|| "No worktree attached".to_string())
+    }
+
+    pub fn active_branch_label(&self) -> String {
+        self.active_task()
+            .and_then(|task| task.worktree_branch.as_deref())
+            .map(str::to_string)
+            .unwrap_or_else(|| "no branch".to_string())
+    }
+
+    pub fn focus_label(&self) -> &'static str {
+        match self.focus {
+            FocusTarget::Terminal => "Terminal",
+            FocusTarget::ContextPane => "Context",
+        }
+    }
+
+    pub fn status_summary(&self) -> WorkspaceStatusSummary {
+        let mut active_count = 0;
+        let mut attention_count = 0;
+        let mut review_count = 0;
+        let mut changed_file_count = 0;
+        let mut pending_review_count = 0;
+        let mut attached_terminal_count = 0;
+        let mut active_agent_count = 0;
+
+        for task in &self.tasks {
+            match task_bucket(task) {
+                TaskBucket::Active => active_count += 1,
+                TaskBucket::Attention => attention_count += 1,
+                TaskBucket::Review => review_count += 1,
+            }
+            changed_file_count += task.changed_file_count;
+            pending_review_count += task.pending_review_comment_count;
+            if task.has_terminal {
+                attached_terminal_count += 1;
+            }
+            if task.agent.is_some()
+                && !matches!(
+                    task.status,
+                    TaskStatus::Done | TaskStatus::Archived | TaskStatus::Failed
+                )
+            {
+                active_agent_count += 1;
+            }
+        }
+
+        let runtime_label = if attached_terminal_count == 0 {
+            "no terminal".to_string()
+        } else {
+            count_label(attached_terminal_count, "terminal", "terminals")
+        };
+
+        WorkspaceStatusSummary {
+            task_count: self.tasks.len(),
+            active_count,
+            attention_count,
+            review_count,
+            changed_file_count,
+            pending_review_count,
+            attached_terminal_count,
+            active_agent_count,
+            runtime_label,
+        }
+    }
+
     pub fn apply_command(&mut self, command: WorkbenchCommand) {
-        match &command {
+        match command {
             WorkbenchCommand::ActivateTask(task_id) => {
-                if self.tasks.iter().any(|task| task.id == *task_id) {
-                    self.active_task_id = Some(*task_id);
+                if self.tasks.iter().any(|task| task.id == task_id) {
+                    self.active_task_id = Some(task_id);
                     self.focus = FocusTarget::Terminal;
                 }
             }
             WorkbenchCommand::SetPaneRoute(route) => {
-                self.pane_route = *route;
+                self.pane_route = route;
                 self.focus = match route {
                     PaneRoute::Terminal => FocusTarget::Terminal,
                     PaneRoute::Preview => FocusTarget::ContextPane,
                 };
             }
             WorkbenchCommand::SetContextTab(tab) => {
-                self.context_tab = *tab;
+                self.context_tab = tab;
                 self.focus = FocusTarget::ContextPane;
             }
-            WorkbenchCommand::Focus(target) => {
-                self.focus = *target;
+            WorkbenchCommand::SetContextFilter(filter) => {
+                self.context_filter = filter;
+                self.focus = FocusTarget::ContextPane;
             }
-            WorkbenchCommand::ToggleCommandPalette => {
-                self.command_palette_open = !self.command_palette_open;
-                self.focus = if self.command_palette_open {
-                    FocusTarget::CommandPalette
-                } else {
-                    FocusTarget::Terminal
-                };
+            WorkbenchCommand::AppendContextFilter(text) => {
+                self.context_filter.push_str(&text);
+                self.focus = FocusTarget::ContextPane;
             }
-            WorkbenchCommand::CreateTask
-            | WorkbenchCommand::LaunchAgent(_)
-            | WorkbenchCommand::SendReviewToAgent => {}
+            WorkbenchCommand::BackspaceContextFilter => {
+                self.context_filter.pop();
+                self.focus = FocusTarget::ContextPane;
+            }
+            WorkbenchCommand::ClearContextFilter => {
+                self.context_filter.clear();
+                self.focus = FocusTarget::ContextPane;
+            }
+            WorkbenchCommand::CreateTask => {}
         }
-        self.last_command = Some(command);
     }
 
     pub fn task_list_rows(&self) -> Vec<TaskListRow> {
@@ -123,12 +212,10 @@ impl WorkspaceViewModel {
         let mut review = Vec::new();
 
         for task in &self.tasks {
-            if task.review_comment_count > 0 || task.pending_review_comment_count > 0 {
-                review.push(task);
-            } else if matches!(task.status_label.as_str(), "WAITING" | "STALE" | "BLOCKED") {
-                waiting.push(task);
-            } else {
-                active.push(task);
+            match task_bucket(task) {
+                TaskBucket::Active => active.push(task),
+                TaskBucket::Attention => waiting.push(task),
+                TaskBucket::Review => review.push(task),
             }
         }
 
@@ -162,8 +249,50 @@ fn append_group_rows(
                 .as_ref()
                 .map(|agent| agent.label().to_string())
                 .unwrap_or_else(|| "no agent".to_string()),
+            worktree_label: task
+                .worktree_path
+                .as_deref()
+                .map(worktree_name)
+                .unwrap_or_else(|| "no worktree".to_string()),
+            changed_label: count_label(task.changed_file_count, "change", "changes"),
+            review_label: count_label(task.pending_review_comment_count, "note", "notes"),
         }))
     }));
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskBucket {
+    Active,
+    Attention,
+    Review,
+}
+
+fn task_bucket(task: &TaskProjection) -> TaskBucket {
+    if task.review_comment_count > 0 || task.pending_review_comment_count > 0 {
+        TaskBucket::Review
+    } else if matches!(
+        task.status,
+        TaskStatus::WaitingForUser | TaskStatus::Stale | TaskStatus::Blocked | TaskStatus::Failed
+    ) {
+        TaskBucket::Attention
+    } else {
+        TaskBucket::Active
+    }
+}
+
+fn worktree_name(path: &str) -> String {
+    path.rsplit(['\\', '/'])
+        .find(|segment| !segment.is_empty())
+        .unwrap_or(path)
+        .to_string()
+}
+
+fn count_label(count: usize, singular: &str, plural: &str) -> String {
+    match count {
+        0 => "0".to_string(),
+        1 => format!("1 {singular}"),
+        value => format!("{value} {plural}"),
+    }
 }
 
 #[cfg(test)]
@@ -211,14 +340,29 @@ mod tests {
     }
 
     #[test]
-    fn command_palette_toggle_should_move_focus() {
-        let mut view_model =
-            WorkspaceViewModel::new(vec![demo_projection("One", AgentRuntimeStatus::Working, 0)]);
+    fn status_summary_should_count_runtime_and_review_state() {
+        let tasks = vec![
+            demo_projection("Working", AgentRuntimeStatus::Working, 0),
+            demo_projection("Waiting", AgentRuntimeStatus::Waiting, 0),
+            demo_projection("Review", AgentRuntimeStatus::Working, 2),
+        ];
+        let view_model = WorkspaceViewModel::new(tasks);
+        let summary = view_model.status_summary();
 
-        view_model.apply_command(WorkbenchCommand::ToggleCommandPalette);
-
-        assert!(view_model.command_palette_open);
-        assert_eq!(view_model.focus, FocusTarget::CommandPalette);
+        assert_eq!(
+            summary,
+            WorkspaceStatusSummary {
+                task_count: 3,
+                active_count: 1,
+                attention_count: 1,
+                review_count: 1,
+                changed_file_count: 0,
+                pending_review_count: 2,
+                attached_terminal_count: 3,
+                active_agent_count: 3,
+                runtime_label: "3 terminals".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -231,6 +375,22 @@ mod tests {
 
         assert_eq!(view_model.pane_route, PaneRoute::Preview);
         assert_eq!(view_model.context_tab, ContextTab::Review);
+    }
+
+    #[test]
+    fn context_filter_commands_should_update_query_and_focus_context() {
+        let mut view_model =
+            WorkspaceViewModel::new(vec![demo_projection("One", AgentRuntimeStatus::Working, 0)]);
+
+        view_model.apply_command(WorkbenchCommand::SetContextFilter("app".to_string()));
+        view_model.apply_command(WorkbenchCommand::AppendContextFilter("_shell".to_string()));
+        view_model.apply_command(WorkbenchCommand::BackspaceContextFilter);
+
+        assert_eq!(view_model.context_filter, "app_shel");
+        assert_eq!(view_model.focus, FocusTarget::ContextPane);
+
+        view_model.apply_command(WorkbenchCommand::ClearContextFilter);
+        assert!(view_model.context_filter.is_empty());
     }
 
     fn demo_projection(

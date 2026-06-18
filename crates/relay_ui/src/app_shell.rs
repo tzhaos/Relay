@@ -1,13 +1,9 @@
 use gpui::{
-    App, Bounds, Context, IntoElement, Render, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, size,
+    App, Bounds, Context, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, Render,
+    TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
+    div, prelude::*, px, size,
 };
-use relay_core::{
-    AgentKind, AgentRuntimeStatus, AgentSessionId, AgentStatusUpdate, ChangeStatus, ChangedFile,
-    CreateTask, PreviewTarget, PreviewTargetId, ProjectId, ReviewComment, ReviewCommentId, Task,
-    TaskCommand, TaskProjection, TaskSource, TerminalSessionId, Timestamp, WorktreeId,
-    WorktreeSnapshot,
-};
+use relay_core::TaskProjection;
 
 use crate::{
     diff_pane::context_pane,
@@ -20,63 +16,131 @@ use crate::{
 pub struct AppShell {
     theme: RelayTheme,
     view_model: WorkspaceViewModel,
+    task_data_source: Box<dyn TaskDataSource>,
+    context_filter_focus: FocusHandle,
+    last_error: Option<String>,
+}
+
+pub trait TaskDataSource {
+    fn create_task(&mut self, title: &str) -> anyhow::Result<Vec<TaskProjection>>;
 }
 
 impl AppShell {
-    pub fn open(cx: &mut App) -> anyhow::Result<()> {
-        let bounds = Bounds::centered(None, size(px(1180.0), px(780.0)), cx);
+    pub fn open(
+        cx: &mut App,
+        tasks: Vec<TaskProjection>,
+        task_data_source: Box<dyn TaskDataSource>,
+    ) -> anyhow::Result<()> {
+        let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(Default::default()),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Relay".into()),
+                    appears_transparent: true,
+                    ..Default::default()
+                }),
+                window_decorations: Some(WindowDecorations::Client),
+                window_min_size: Some(size(px(1180.0), px(780.0))),
+                app_id: Some("relay".to_string()),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| Self::new()),
+            |_, cx| cx.new(|cx| Self::new(tasks, task_data_source, cx)),
         )?;
         cx.activate(true);
         Ok(())
     }
 
-    fn new() -> Self {
+    fn new(
+        tasks: Vec<TaskProjection>,
+        task_data_source: Box<dyn TaskDataSource>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
-            theme: RelayTheme::dark(),
-            view_model: WorkspaceViewModel::new(demo_task_projections()),
+            theme: RelayTheme::orca(),
+            view_model: WorkspaceViewModel::new(tasks),
+            task_data_source,
+            context_filter_focus: cx.focus_handle(),
+            last_error: None,
         }
     }
 
-    fn header(&self) -> impl IntoElement {
+    fn title_bar(&self, window: &mut Window) -> impl IntoElement {
+        let summary = self.view_model.status_summary();
+
         div()
             .flex()
             .items_center()
             .justify_between()
-            .h(px(44.0))
-            .px_4()
+            .h(px(42.0))
+            .pl_3()
             .border_b_1()
             .border_color(self.theme.line)
-            .bg(self.theme.chrome_alt)
+            .bg(self.theme.chrome)
+            .window_control_area(WindowControlArea::Drag)
             .child(
                 div()
+                    .min_w_0()
                     .flex()
                     .items_center()
-                    .gap_3()
+                    .gap_2()
+                    .child(title_mark(self.theme))
                     .child(
                         div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(self.theme.text)
-                            .child("Relay"),
-                    )
-                    .child(div().text_sm().text_color(self.theme.muted).child(format!(
-                        "{} / {}",
-                        self.view_model.project_label, self.view_model.branch_label
-                    ))),
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_sm()
+                                    .text_color(self.theme.text)
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .child("Relay"),
+                            )
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(self.theme.muted)
+                                    .child(self.view_model.active_worktree_label()),
+                            ),
+                    ),
             )
             .child(
-                div().flex().items_center().gap_3().child(
-                    div()
-                        .text_sm()
-                        .text_color(self.theme.muted)
-                        .child("New task / Agent / Review"),
-                ),
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .child(title_badge(
+                        self.theme,
+                        self.view_model.project_label.clone(),
+                    ))
+                    .child(title_badge(
+                        self.theme,
+                        self.view_model.active_branch_label(),
+                    )),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .child(header_stat(
+                        self.theme,
+                        "Tasks",
+                        summary.task_count.to_string(),
+                    ))
+                    .child(header_stat(
+                        self.theme,
+                        "Agents",
+                        summary.active_agent_count.to_string(),
+                    ))
+                    .child(window_controls(self.theme, window)),
             )
     }
 
@@ -87,45 +151,150 @@ impl AppShell {
 
         TerminalPaneProjection {
             session_id: active_task.terminal_session_id,
-            cwd: active_task
-                .worktree_path
-                .clone()
-                .unwrap_or_else(|| "F:\\Workspace\\Relay".to_string()),
+            cwd: active_task.worktree_path.clone().unwrap_or_default(),
             title: active_task
                 .agent
                 .as_ref()
-                .map(|kind| format!("{kind:?} session")),
-            scrollback: format!(
-                "relay $ attach-terminal {}\nrelay $ agent status: {}\n{}",
-                active_task
-                    .terminal_session_id
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "none".to_string()),
-                active_task.status_label,
-                active_task.agent_prompt
-            ),
+                .map(|kind| format!("{} session", kind.label())),
+            scrollback: String::new(),
             exited: false,
         }
     }
 
     pub(crate) fn dispatch(&mut self, command: WorkbenchCommand, cx: &mut Context<Self>) {
+        if command == WorkbenchCommand::CreateTask {
+            self.create_task(cx);
+            return;
+        }
+
         self.view_model.apply_command(command);
         cx.notify();
+    }
+
+    pub(crate) fn context_filter_focus(&self) -> &FocusHandle {
+        &self.context_filter_focus
+    }
+
+    pub(crate) fn handle_context_filter_key(
+        &mut self,
+        event: &KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let keystroke = event.keystroke.clone().with_simulated_ime();
+        match keystroke.key.as_str() {
+            "escape" => {
+                self.dispatch(WorkbenchCommand::ClearContextFilter, cx);
+                true
+            }
+            "backspace" => {
+                self.dispatch(WorkbenchCommand::BackspaceContextFilter, cx);
+                true
+            }
+            _ if !keystroke.modifiers.control
+                && !keystroke.modifiers.alt
+                && !keystroke.modifiers.platform
+                && !keystroke.modifiers.function =>
+            {
+                if let Some(text) = keystroke
+                    .key_char
+                    .filter(|text| text.chars().all(|character| !character.is_control()))
+                {
+                    self.dispatch(WorkbenchCommand::AppendContextFilter(text), cx);
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn create_task(&mut self, cx: &mut Context<Self>) {
+        let title = format!("New task {}", self.view_model.tasks.len() + 1);
+        match self.task_data_source.create_task(&title) {
+            Ok(tasks) => {
+                self.view_model = WorkspaceViewModel::new(tasks);
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn status_bar(&self) -> impl IntoElement {
+        let summary = self.view_model.status_summary();
+
+        div()
+            .h(px(28.0))
+            .flex_shrink_0()
+            .px_3()
+            .border_t_1()
+            .border_color(self.theme.line)
+            .bg(self.theme.chrome_alt)
+            .flex()
+            .items_center()
+            .justify_between()
+            .text_xs()
+            .child(
+                div()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(status_bar_item(
+                        self.theme,
+                        "Runtime",
+                        summary.runtime_label,
+                    ))
+                    .child(status_bar_item(
+                        self.theme,
+                        "Focus",
+                        self.view_model.focus_label().to_string(),
+                    ))
+                    .child(status_bar_item(
+                        self.theme,
+                        "Worktree",
+                        self.view_model.active_worktree_label(),
+                    )),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(status_bar_item(
+                        self.theme,
+                        "Changes",
+                        summary.changed_file_count.to_string(),
+                    ))
+                    .child(status_bar_item(
+                        self.theme,
+                        "Review",
+                        summary.pending_review_count.to_string(),
+                    ))
+                    .children(self.last_error.as_ref().map(|error| {
+                        status_bar_item(self.theme, "Error", error.clone()).into_any_element()
+                    })),
+            )
     }
 }
 
 impl Render for AppShell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .bg(self.theme.bg)
             .flex()
             .flex_col()
-            .child(self.header())
+            .child(self.title_bar(window))
             .child(
                 div()
                     .flex()
                     .flex_1()
+                    .min_h_0()
                     .child(task_list(self.theme, &self.view_model, cx))
                     .child(terminal_pane(
                         self.theme,
@@ -133,161 +302,137 @@ impl Render for AppShell {
                         &self.terminal_projection(),
                         cx,
                     ))
-                    .child(context_pane(self.theme, &self.view_model, cx)),
+                    .child(context_pane(
+                        self.theme,
+                        &self.view_model,
+                        self.context_filter_focus(),
+                        cx,
+                    )),
             )
+            .child(self.status_bar())
     }
 }
 
-fn demo_task_projections() -> Vec<TaskProjection> {
-    let project_id = ProjectId::new();
-    let now = Timestamp::UNIX_EPOCH;
-
-    let mut working = create_demo_task(project_id, "Design GPUI shell", now);
-    apply_demo_event(
-        &mut working,
-        TaskCommand::AttachWorktree {
-            snapshot: WorktreeSnapshot {
-                id: WorktreeId::new(),
-                path: "F:\\Workspace\\Relay".to_string(),
-                branch: "main".to_string(),
-                base_ref: Some("origin/master".to_string()),
-            },
-            now,
-        },
-    );
-    apply_demo_event(
-        &mut working,
-        TaskCommand::AttachTerminal {
-            id: TerminalSessionId::new(),
-            now,
-        },
-    );
-    apply_demo_event(
-        &mut working,
-        TaskCommand::AttachAgent {
-            id: AgentSessionId::new(),
-            kind: AgentKind::Claude,
-            started_at: now,
-        },
-    );
-    apply_demo_event(
-        &mut working,
-        TaskCommand::ApplyAgentStatus(AgentStatusUpdate {
-            state: AgentRuntimeStatus::Working,
-            prompt: "Build GPUI shell".to_string(),
-            agent_kind: Some(AgentKind::Claude),
-            observed_at: now,
-        }),
-    );
-    apply_demo_event(
-        &mut working,
-        TaskCommand::RefreshChangedFiles {
-            files: vec![
-                ChangedFile {
-                    path: "crates/relay_ui/src/app_shell.rs".to_string(),
-                    status: ChangeStatus::Modified,
-                },
-                ChangedFile {
-                    path: "crates/relay_core/src/task.rs".to_string(),
-                    status: ChangeStatus::Added,
-                },
-                ChangedFile {
-                    path: "crates/relay_core/src/task_event.rs".to_string(),
-                    status: ChangeStatus::Added,
-                },
-            ],
-            now,
-        },
-    );
-
-    let mut waiting = create_demo_task(project_id, "Codex provider spike", now);
-    apply_demo_event(
-        &mut waiting,
-        TaskCommand::AttachWorktree {
-            snapshot: WorktreeSnapshot {
-                id: WorktreeId::new(),
-                path: "F:\\Workspace\\Relay\\.worktrees\\codex-spike".to_string(),
-                branch: "task/codex-provider".to_string(),
-                base_ref: Some("origin/master".to_string()),
-            },
-            now,
-        },
-    );
-    apply_demo_event(
-        &mut waiting,
-        TaskCommand::AttachTerminal {
-            id: TerminalSessionId::new(),
-            now,
-        },
-    );
-    apply_demo_event(
-        &mut waiting,
-        TaskCommand::AttachAgent {
-            id: AgentSessionId::new(),
-            kind: AgentKind::Codex,
-            started_at: now,
-        },
-    );
-    apply_demo_event(
-        &mut waiting,
-        TaskCommand::ApplyAgentStatus(AgentStatusUpdate {
-            state: AgentRuntimeStatus::Waiting,
-            prompt: "Probe Codex CLI launch".to_string(),
-            agent_kind: Some(AgentKind::Codex),
-            observed_at: now,
-        }),
-    );
-
-    let mut reviewing = create_demo_task(project_id, "Diff review model", now);
-    let reviewing_id = reviewing.id;
-    apply_demo_event(
-        &mut reviewing,
-        TaskCommand::AddReviewComment(ReviewComment {
-            id: ReviewCommentId::new(),
-            task_id: reviewing_id,
-            path: "crates/relay_diff/src/lib.rs".to_string(),
-            line: None,
-            selected_range: None,
-            body: "Keep review comments task-scoped.".to_string(),
-            created_at: now,
-        }),
-    );
-    apply_demo_event(
-        &mut reviewing,
-        TaskCommand::AttachPreview {
-            target: PreviewTarget {
-                id: PreviewTargetId::new(),
-                label: "Relay shell".to_string(),
-                uri: "relay://preview/app-shell".to_string(),
-            },
-            now,
-        },
-    );
-
-    vec![
-        TaskProjection::from_task(&working),
-        TaskProjection::from_task(&waiting),
-        TaskProjection::from_task(&reviewing),
-    ]
+fn title_mark(theme: RelayTheme) -> gpui::Div {
+    div()
+        .w(px(24.0))
+        .h(px(24.0))
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.panel)
+        .flex()
+        .items_center()
+        .justify_center()
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(theme.text)
+        .child("R")
 }
 
-fn create_demo_task(project_id: ProjectId, title: &str, now: Timestamp) -> Task {
-    let (task, _) = Task::create(CreateTask {
-        id: None,
-        project_id,
-        title: title.to_string(),
-        source: TaskSource::Manual,
-        now,
-    })
-    .expect("demo task should be valid");
-    task
+fn title_badge(theme: RelayTheme, label: String) -> gpui::Div {
+    div()
+        .h(px(26.0))
+        .max_w(px(220.0))
+        .px_3()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.panel)
+        .flex()
+        .items_center()
+        .text_sm()
+        .text_color(theme.text)
+        .child(div().truncate().child(label))
 }
 
-fn apply_demo_event(task: &mut Task, command: TaskCommand) {
-    for event in task
-        .handle(command)
-        .expect("demo transition should be valid")
-    {
-        task.apply(&event).expect("demo event should apply");
-    }
+fn header_stat(theme: RelayTheme, label: &'static str, value: String) -> gpui::Div {
+    div()
+        .h(px(26.0))
+        .mr_2()
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.chrome_alt)
+        .flex()
+        .items_center()
+        .gap_1()
+        .text_sm()
+        .child(div().text_color(theme.muted).child(label))
+        .child(
+            div()
+                .max_w(px(80.0))
+                .truncate()
+                .text_color(theme.text)
+                .child(value),
+        )
+}
+
+fn window_controls(theme: RelayTheme, window: &Window) -> gpui::Div {
+    let max_label = if window.is_maximized() { "[]" } else { "[ ]" };
+
+    div()
+        .h_full()
+        .flex()
+        .items_center()
+        .window_control_area(WindowControlArea::Drag)
+        .child(window_control_button(
+            theme,
+            WindowControlArea::Min,
+            "_",
+            false,
+        ))
+        .child(window_control_button(
+            theme,
+            WindowControlArea::Max,
+            max_label,
+            false,
+        ))
+        .child(window_control_button(
+            theme,
+            WindowControlArea::Close,
+            "X",
+            true,
+        ))
+}
+
+fn window_control_button(
+    theme: RelayTheme,
+    area: WindowControlArea,
+    label: &'static str,
+    danger: bool,
+) -> gpui::Div {
+    div()
+        .w(px(44.0))
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(theme.muted)
+        .window_control_area(area)
+        .hover(move |style| {
+            if danger {
+                style.bg(theme.danger).text_color(gpui::white())
+            } else {
+                style.bg(theme.selection).text_color(theme.text)
+            }
+        })
+        .child(label)
+}
+
+fn status_bar_item(theme: RelayTheme, label: &'static str, value: String) -> gpui::Div {
+    div()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(div().flex_shrink_0().text_color(theme.muted).child(label))
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_color(theme.text)
+                .child(value),
+        )
 }

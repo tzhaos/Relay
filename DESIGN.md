@@ -4,7 +4,7 @@ Status: Active
 Owner: Relay  
 Last updated: 2026-06-18
 
-Relay should feel like Zed and work like Orca.
+Relay should align with Orca's product structure and visual language while keeping GPUI/Zed's native desktop crispness.
 
 This file is the source of truth for UI implementation. Use it before editing `crates/relay_ui` and before asking an agent to implement interface changes.
 
@@ -14,9 +14,9 @@ This file is the source of truth for UI implementation. Use it before editing `c
 - Layout and workflow reference: `docs/design/references/orca-layout-reference.png` at 1875x1025.
 - Product direction: `docs/rfc-004-ui-workbench.md`.
 
-The Zed screenshot is a style reference, not a layout requirement. Match its native desktop density, crisp 1 px dividers, restrained contrast, compact chrome, editor-grade typography, and calm neutral surfaces.
+The Zed screenshot is a GPUI/native quality reference, not the primary visual direction. Use its crisp 1 px dividers, compact chrome, editor-grade typography, and stable density where they improve the Orca-style shell.
 
-The Orca screenshot is a layout and workflow reference, not a visual style requirement. Match its left project/task rail, terminal-centered work area, right file/context panel, task/worktree mental model, and persistent multi-agent workspace controls.
+The Orca screenshots are the primary product and visual references. Match the left app navigation and project/worktree tree, terminal-centered work area, right file/context panel with toolbar/search/segmented controls, task/worktree mental model, and persistent multi-agent workspace controls.
 
 Do not copy proprietary icons, exact assets, or branding from either product.
 
@@ -27,11 +27,11 @@ Relay is a Rust + GPUI desktop workbench for CLI-agent development.
 Primary screen:
 
 ```text
-top app bar: app identity, project, branch, command/actions
-left rail: global nav, projects, worktrees, tasks, agent state
+top app bar: custom titlebar, app identity, project, branch, real actions
+left rail: project, active worktree, tasks, agent state
 center work area: terminal first, preview second
-right context: files, diff, review notes, task metadata
-bottom/status area: runtime status, focus hints, background jobs
+right context: searchable files, diff, review notes, task metadata
+bottom/status area: runtime status, focus hints, review/change state
 ```
 
 The first viewport target is desktop-first:
@@ -45,10 +45,10 @@ The first viewport target is desktop-first:
 
 Use stable dimensions instead of content-driven panel sizing.
 
-- Window default: 1180x780 until real window state persistence exists.
+- Window default: 1180x780 until real window state persistence exists; 1440x900+ is the primary design target when display space allows.
 - Top app bar: 40-44 px.
-- Left rail target: 320-352 px.
-- Right context target: 360-440 px.
+- Left rail target: 280-320 px.
+- Right context target: 340-380 px.
 - Center work area: fills remaining space and owns the largest visual mass.
 - Pane headers: 40-42 px.
 - Bottom/status strip, when present: 28-32 px.
@@ -63,12 +63,12 @@ The center terminal must be visually dominant. The right context pane is always 
 
 ## Visual Contract
 
-Use a restrained native editor palette.
+Use an Orca-like native desktop palette.
 
 Current palette intent:
 
 - App background: near white, not pure decorative gray.
-- Chrome surfaces: subtle warm/cool gray.
+- Chrome surfaces: light warm gray, with visible-but-soft controls.
 - Terminal surface: dark neutral slate.
 - Text: high-contrast neutral.
 - Muted text: soft gray.
@@ -80,8 +80,8 @@ Rules:
 
 - Prefer 1 px borders over shadows.
 - Use shadows only for command palette, popovers, and floating tools.
-- Radius should stay small: 4-8 px.
-- Avoid rounded pill-heavy UI except badges and segmented controls.
+- Radius should stay small-to-medium: 6-10 px for inputs and selected rows.
+- Use rounded selected rows, search fields, badges, and segmented controls where Orca does.
 - Avoid saturated gradients and decorative blobs.
 - Avoid large empty hero-like whitespace.
 - Avoid one-note purple, blue, beige, or espresso palettes.
@@ -112,19 +112,22 @@ Required interaction model:
 - Terminal focus returns when switching tasks.
 - Context tabs switch between Files, Diff, and Review.
 - Terminal/Preview route switch preserves task state.
-- Command palette is the long-term home for global actions.
+- Command palette is the long-term home for global actions, but it must not be shown as an actionable entry until it exists.
 - Focus state must be visible but quiet.
 
 UI must dispatch commands instead of mutating domain state directly. GPUI view code can render projections and send `WorkbenchCommand`; it must not spawn git, PTY, agent, browser, database, or filesystem side effects directly.
+
+Do not delete foundational fake features to make the screen look cleaner. If a displayed control is part of Relay's core workbench model, implement the smallest real behavior behind it. For example, task creation must persist a task event, file search must filter files, and context tabs must switch real projections. Remove only late-stage product areas that Relay does not support yet, such as automation, mobile, and remote collaboration.
 
 ## Component Contract
 
 Left rail:
 
-- Top section: product/project identity.
-- Global nav: tasks, automation, mobile/remote entry, search.
-- Project groups with counts.
-- Active project/worktree rows use subtle selection, green status dot, and branch/path metadata.
+- Top section: Relay identity and the current workspace.
+- No Automation, Mobile, or Remote entries until those modules exist.
+- Project groups with folder icons and count badges.
+- Active project/worktree rows use rounded selection, green status dot, branch/type badge, and path metadata.
+- Task creation is a real persisted action, not a visual placeholder.
 - Task rows show title, status, agent, branch/path summary, and changed/review counts when available.
 
 Center:
@@ -136,7 +139,7 @@ Center:
 
 Right context:
 
-- Header includes Files/Diff/Review segmented tabs.
+- Header includes project/context title, real file filter, and Files/Diff/Review segmented tabs.
 - Files tab uses a compact tree.
 - Diff tab uses readable hunks without large decorative cards.
 - Review tab shows pending comments and delivery state.
@@ -153,8 +156,8 @@ Use this loop for every UI task:
 
 1. Read `DESIGN.md` and the relevant files under `crates/relay_ui`.
 2. Identify which reference applies:
-   - Style decisions come from Zed.
-   - Layout and workflow decisions come from Orca.
+   - Product structure and visual language come from Orca.
+   - Native density and GPUI implementation quality come from Zed.
 3. Make the smallest UI/code changes that satisfy the requested behavior.
 4. Keep dimensions explicit where alignment matters.
 5. Run `cargo fmt`.
