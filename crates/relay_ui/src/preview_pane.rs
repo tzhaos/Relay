@@ -44,8 +44,12 @@ pub fn preview_content(
         )
         .child(
             div()
+                .id("preview-scroll")
                 .flex_1()
+                .min_h_0()
                 .p_4()
+                .overflow_y_scroll()
+                .overflow_x_hidden()
                 .flex()
                 .flex_col()
                 .gap_3()

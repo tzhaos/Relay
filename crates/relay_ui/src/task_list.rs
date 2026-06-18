@@ -189,8 +189,16 @@ fn task_rows(
     view_model: &WorkspaceViewModel,
     terminal_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
-) -> gpui::Div {
-    let mut rows = div().flex().flex_col().gap_1();
+) -> impl IntoElement {
+    let mut rows = div()
+        .id("task-rows-scroll")
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .overflow_x_hidden()
+        .flex()
+        .flex_col()
+        .gap_1();
     let mut has_rows = false;
 
     for row in view_model.task_list_rows() {

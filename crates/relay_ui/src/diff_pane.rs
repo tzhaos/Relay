@@ -240,7 +240,7 @@ fn files_tab(
     task: Option<&TaskProjection>,
     filter: &str,
     cx: &mut Context<AppShell>,
-) -> gpui::Div {
+) -> gpui::AnyElement {
     let mut rows = div().flex().flex_col().gap_1();
     let mut row_count = 0;
     if let Some(task) = task {
@@ -253,8 +253,12 @@ fn files_tab(
     }
 
     div()
+        .id("files-tab-scroll")
         .flex_1()
+        .min_h_0()
         .p_3()
+        .overflow_y_scroll()
+        .overflow_x_hidden()
         .flex()
         .flex_col()
         .gap_3()
@@ -264,6 +268,7 @@ fn files_tab(
         } else {
             rows
         })
+        .into_any_element()
 }
 
 fn diff_tab(
@@ -273,7 +278,7 @@ fn diff_tab(
     review_target: Option<&ReviewDraftTarget>,
     review_draft_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
-) -> gpui::Div {
+) -> gpui::AnyElement {
     let diff_files = filtered_diff_files(task, filter);
     let task_id = task.map(|task| task.id);
     let review_context = ReviewTargetContext {
@@ -291,8 +296,12 @@ fn diff_tab(
     }
 
     div()
+        .id("diff-tab-scroll")
         .flex_1()
+        .min_h_0()
         .p_3()
+        .overflow_y_scroll()
+        .overflow_x_hidden()
         .flex()
         .flex_col()
         .gap_3()
@@ -303,6 +312,7 @@ fn diff_tab(
         } else {
             files
         })
+        .into_any_element()
 }
 
 fn review_tab(
@@ -312,7 +322,7 @@ fn review_tab(
     draft: &ReviewDraftState,
     review_draft_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
-) -> gpui::Div {
+) -> gpui::AnyElement {
     let review_comments = filtered_review_comments(task, filter);
     let review_count = review_comments.len();
     let pending_count = review_comments
@@ -328,8 +338,12 @@ fn review_tab(
     }
 
     div()
+        .id("review-tab-scroll")
         .flex_1()
+        .min_h_0()
         .p_3()
+        .overflow_y_scroll()
+        .overflow_x_hidden()
         .flex()
         .flex_col()
         .gap_3()
@@ -357,6 +371,7 @@ fn review_tab(
         } else {
             comments
         })
+        .into_any_element()
 }
 
 fn filtered_changed_files(task: &TaskProjection, filter: &str) -> Vec<ChangedFile> {

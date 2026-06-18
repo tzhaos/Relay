@@ -179,6 +179,7 @@ fn terminal_content(
 
     div()
         .flex_1()
+        .min_h_0()
         .bg(theme.terminal_bg)
         .flex()
         .flex_col()
@@ -205,8 +206,11 @@ fn terminal_content(
         }))
         .child(
             div()
+                .id("terminal-scrollback")
                 .flex_1()
-                .overflow_hidden()
+                .min_h_0()
+                .overflow_y_scroll()
+                .overflow_x_hidden()
                 .font_family("Consolas")
                 .text_color(theme.terminal_text)
                 .bg(theme.terminal_bg)
