@@ -5,6 +5,7 @@ members = [
     "crates/relay_core",
     "crates/relay_persistence",
     "crates/relay_project",
+    "crates/relay_terminal",
     "crates/relay_ui",
     "crates/relay_worktree",
     "crates/relay_infra",
@@ -24,8 +25,10 @@ relay_core = { path = "crates/relay_core" }
 relay_infra = { path = "crates/relay_infra" }
 relay_persistence = { path = "crates/relay_persistence" }
 relay_project = { path = "crates/relay_project" }
+relay_terminal = { path = "crates/relay_terminal" }
 relay_ui = { path = "crates/relay_ui" }
 relay_worktree = { path = "crates/relay_worktree" }
+portable-pty = "0.9.0"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -9,7 +9,10 @@ use relay_core::{
     WorktreeId, WorktreeSnapshot,
 };
 
-use crate::theme::RelayTheme;
+use crate::{
+    terminal_pane::{TerminalPaneProjection, terminal_pane},
+    theme::RelayTheme,
+};
 
 pub struct AppShell {
     theme: RelayTheme,
@@ -144,44 +147,32 @@ impl AppShell {
             )
     }
 
-    fn terminal_pane(&self) -> impl IntoElement {
-        div()
-            .flex_1()
-            .h_full()
-            .bg(self.theme.bg)
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(self.theme.muted)
-                    .child("TERMINAL"),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(self.theme.line)
-                    .bg(self.theme.panel)
-                    .p_4()
-                    .text_color(self.theme.text)
-                    .child("relay $ claude")
-                    .child(
-                        div()
-                            .mt_2()
-                            .text_color(self.theme.muted)
-                            .child("Native CLI agent will run here via PTY."),
-                    )
-                    .child(
-                        div()
-                            .mt_4()
-                            .text_color(self.theme.accent)
-                            .child("Step 1 target: GPUI shell + pane layout."),
-                    ),
-            )
+    fn terminal_projection(&self) -> TerminalPaneProjection {
+        let Some(active_task) = self.tasks.first() else {
+            return TerminalPaneProjection::detached();
+        };
+
+        TerminalPaneProjection {
+            session_id: active_task.terminal_session_id,
+            cwd: active_task
+                .worktree_path
+                .clone()
+                .unwrap_or_else(|| "F:\\Workspace\\Relay".to_string()),
+            title: active_task
+                .agent
+                .as_ref()
+                .map(|kind| format!("{kind:?} session")),
+            scrollback: format!(
+                "relay $ attach-terminal {}\nrelay $ agent status: {}\n{}",
+                active_task
+                    .terminal_session_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                active_task.status_label,
+                active_task.agent_prompt
+            ),
+            exited: false,
+        }
     }
 
     fn context_pane(&self) -> impl IntoElement {
@@ -259,7 +250,7 @@ impl Render for AppShell {
                     .flex()
                     .flex_1()
                     .child(self.task_list())
-                    .child(self.terminal_pane())
+                    .child(terminal_pane(self.theme, &self.terminal_projection()))
                     .child(self.context_pane()),
             )
     }
