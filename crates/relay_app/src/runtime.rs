@@ -524,6 +524,53 @@ impl RelayRuntime {
             self.apply_agent_status_from_terminal_event(&event)?;
             changed = true;
         }
+        if self.mark_stale_agent_statuses()? {
+            changed = true;
+        }
+        Ok(changed)
+    }
+
+    fn mark_stale_agent_statuses(&mut self) -> Result<bool> {
+        let now = OffsetDateTime::now_utc();
+        let task_ids = self
+            .database
+            .task_repository()
+            .list_tasks_for_project(self.project.id)?
+            .into_iter()
+            .filter(|task| {
+                matches!(
+                    task.status,
+                    TaskStatus::StartingAgent
+                        | TaskStatus::Working
+                        | TaskStatus::WaitingForUser
+                        | TaskStatus::Blocked
+                )
+            })
+            .filter_map(|task| {
+                task.agent
+                    .map(|agent| (task.id, agent, task.last_activity_at))
+            })
+            .filter_map(|(task_id, agent, last_activity_at)| {
+                self.agent_registry
+                    .stale_status(agent, last_activity_at, now)
+                    .map(|update| (task_id, update))
+            })
+            .collect::<Vec<_>>();
+
+        let mut changed = false;
+        for (task_id, update) in task_ids {
+            let Some(mut task) = self.database.task_repository().load_task(task_id)? else {
+                continue;
+            };
+            let events = task.handle(TaskCommand::ApplyAgentStatus(update))?;
+            apply_events(&mut task, &events)?;
+            let projection = TaskProjection::from_task(&task);
+            let mut repository = self.database.task_repository();
+            repository.append_events(&events)?;
+            repository.save_snapshot(&projection)?;
+            changed = true;
+        }
+
         Ok(changed)
     }
 
@@ -1305,6 +1352,48 @@ mod tests {
             .expect("terminal should be connected")
             .scrollback;
         assert_eq!(status, TaskStatus::Done, "scrollback: {scrollback:?}");
+    }
+
+    #[test]
+    fn poll_runtime_should_mark_silent_agent_stale_after_threshold() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)])
+                .with_stale_after(Duration::ZERO),
+        )
+        .expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Stale agent")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+        attach_test_agent(&mut runtime, task_id);
+
+        let changed = runtime
+            .drain_terminal_events()
+            .expect("runtime should poll stale state");
+        let task = runtime
+            .database
+            .task_repository()
+            .load_task(task_id)
+            .expect("task should load")
+            .expect("task should exist");
+
+        assert!(changed);
+        assert_eq!(task.status, TaskStatus::Stale);
     }
 
     #[test]
