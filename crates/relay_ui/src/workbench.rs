@@ -1,4 +1,4 @@
-use relay_core::{TaskId, TaskProjection, TaskStatus, TerminalSessionId};
+use relay_core::{LineIdentity, TaskId, TaskProjection, TaskStatus, TerminalSessionId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneRoute {
@@ -28,11 +28,46 @@ pub enum WorkbenchCommand {
     AppendContextFilter(String),
     BackspaceContextFilter,
     ClearContextFilter,
+    SelectReviewTarget(ReviewDraftTarget),
+    AppendReviewDraft(String),
+    BackspaceReviewDraft,
+    ClearReviewDraft,
+    SubmitReviewDraft,
     CreateTask,
     LaunchAgent(TaskId),
     DeliverReview(TaskId),
     AttachWorktreePreview(TaskId),
     WriteTerminal(TerminalSessionId, Vec<u8>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewDraftTarget {
+    pub task_id: TaskId,
+    pub line: LineIdentity,
+    pub selected_text: Option<String>,
+}
+
+impl ReviewDraftTarget {
+    pub fn path(&self) -> &str {
+        &self.line.path
+    }
+
+    pub fn line_label(&self) -> String {
+        let line_number = match self.line.side {
+            relay_core::DiffSide::Old => self.line.old_line,
+            relay_core::DiffSide::New => self.line.new_line,
+        };
+
+        line_number
+            .map(|number| format!("{:?} line {}", self.line.side, number))
+            .unwrap_or_else(|| "file".to_string())
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReviewDraftState {
+    pub target: Option<ReviewDraftTarget>,
+    pub body: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +107,7 @@ pub struct WorkspaceViewModel {
     pub pane_route: PaneRoute,
     pub context_tab: ContextTab,
     pub context_filter: String,
+    pub review_draft: ReviewDraftState,
     pub focus: FocusTarget,
 }
 
@@ -88,6 +124,7 @@ impl WorkspaceViewModel {
             pane_route: PaneRoute::Terminal,
             context_tab: ContextTab::Files,
             context_filter: String::new(),
+            review_draft: ReviewDraftState::default(),
             focus: FocusTarget::Terminal,
         }
     }
@@ -177,11 +214,23 @@ impl WorkspaceViewModel {
         }
     }
 
+    pub fn can_submit_review_draft(&self) -> bool {
+        self.review_draft.target.is_some() && !self.review_draft.body.trim().is_empty()
+    }
+
     pub fn apply_command(&mut self, command: WorkbenchCommand) {
         match command {
             WorkbenchCommand::ActivateTask(task_id) => {
                 if self.tasks.iter().any(|task| task.id == task_id) {
                     self.active_task_id = Some(task_id);
+                    if self
+                        .review_draft
+                        .target
+                        .as_ref()
+                        .is_some_and(|target| target.task_id != task_id)
+                    {
+                        self.review_draft = ReviewDraftState::default();
+                    }
                     self.focus = FocusTarget::Terminal;
                 }
             }
@@ -212,6 +261,27 @@ impl WorkspaceViewModel {
                 self.context_filter.clear();
                 self.focus = FocusTarget::ContextPane;
             }
+            WorkbenchCommand::SelectReviewTarget(target) => {
+                if self.tasks.iter().any(|task| task.id == target.task_id) {
+                    self.active_task_id = Some(target.task_id);
+                    self.review_draft.target = Some(target);
+                    self.context_tab = ContextTab::Review;
+                    self.focus = FocusTarget::ContextPane;
+                }
+            }
+            WorkbenchCommand::AppendReviewDraft(text) => {
+                self.review_draft.body.push_str(&text);
+                self.focus = FocusTarget::ContextPane;
+            }
+            WorkbenchCommand::BackspaceReviewDraft => {
+                self.review_draft.body.pop();
+                self.focus = FocusTarget::ContextPane;
+            }
+            WorkbenchCommand::ClearReviewDraft => {
+                self.review_draft = ReviewDraftState::default();
+                self.focus = FocusTarget::ContextPane;
+            }
+            WorkbenchCommand::SubmitReviewDraft => {}
             WorkbenchCommand::CreateTask => {}
             WorkbenchCommand::LaunchAgent(_) => {}
             WorkbenchCommand::DeliverReview(_) => {}
@@ -313,8 +383,9 @@ fn count_label(count: usize, singular: &str, plural: &str) -> String {
 #[cfg(test)]
 mod tests {
     use relay_core::{
-        AgentKind, AgentRuntimeStatus, AgentStatusUpdate, CreateTask, ProjectId, Task, TaskCommand,
-        TaskProjection, TaskSource, TerminalSessionId, Timestamp, WorktreeId, WorktreeSnapshot,
+        AgentKind, AgentRuntimeStatus, AgentStatusUpdate, CreateTask, DiffSide, LineIdentity,
+        ProjectId, Task, TaskCommand, TaskProjection, TaskSource, TerminalSessionId, Timestamp,
+        WorktreeId, WorktreeSnapshot,
     };
 
     use super::*;
@@ -408,6 +479,44 @@ mod tests {
         assert!(view_model.context_filter.is_empty());
     }
 
+    #[test]
+    fn review_draft_commands_should_select_target_and_track_body() {
+        let task = demo_projection("Review target", AgentRuntimeStatus::Working, 0);
+        let task_id = task.id;
+        let mut view_model = WorkspaceViewModel::new(vec![task]);
+
+        view_model.apply_command(WorkbenchCommand::SelectReviewTarget(review_target(task_id)));
+        view_model.apply_command(WorkbenchCommand::AppendReviewDraft(
+            "Tighten this branch.".to_string(),
+        ));
+
+        assert_eq!(view_model.context_tab, ContextTab::Review);
+        assert_eq!(view_model.review_draft.body, "Tighten this branch.");
+        assert!(view_model.can_submit_review_draft());
+    }
+
+    #[test]
+    fn activate_task_should_clear_review_draft_for_previous_task() {
+        let tasks = vec![
+            demo_projection("One", AgentRuntimeStatus::Working, 0),
+            demo_projection("Two", AgentRuntimeStatus::Waiting, 0),
+        ];
+        let first_id = tasks[0].id;
+        let second_id = tasks[1].id;
+        let mut view_model = WorkspaceViewModel::new(tasks);
+        view_model.apply_command(WorkbenchCommand::SelectReviewTarget(review_target(
+            first_id,
+        )));
+        view_model.apply_command(WorkbenchCommand::AppendReviewDraft(
+            "Carry over?".to_string(),
+        ));
+
+        view_model.apply_command(WorkbenchCommand::ActivateTask(second_id));
+
+        assert_eq!(view_model.active_task_id, Some(second_id));
+        assert_eq!(view_model.review_draft, ReviewDraftState::default());
+    }
+
     fn demo_projection(
         title: &str,
         state: AgentRuntimeStatus,
@@ -476,6 +585,20 @@ mod tests {
         }
 
         TaskProjection::from_task(&task)
+    }
+
+    fn review_target(task_id: TaskId) -> ReviewDraftTarget {
+        ReviewDraftTarget {
+            task_id,
+            line: LineIdentity {
+                path: "src/lib.rs".to_string(),
+                side: DiffSide::New,
+                old_line: None,
+                new_line: Some(42),
+                hunk_header: "@@ -40,1 +42,1 @@".to_string(),
+            },
+            selected_text: Some("let value = compute();".to_string()),
+        }
     }
 
     fn apply(task: &mut Task, command: TaskCommand) {

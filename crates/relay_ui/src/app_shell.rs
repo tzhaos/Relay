@@ -12,7 +12,7 @@ use crate::{
     task_list::task_list,
     terminal_pane::{TerminalPaneProjection, terminal_pane},
     theme::RelayTheme,
-    workbench::{WorkbenchCommand, WorkspaceViewModel},
+    workbench::{ReviewDraftTarget, WorkbenchCommand, WorkspaceViewModel},
 };
 
 pub struct AppShell {
@@ -21,6 +21,7 @@ pub struct AppShell {
     task_data_source: Box<dyn TaskDataSource>,
     terminal_focus: FocusHandle,
     context_filter_focus: FocusHandle,
+    review_draft_focus: FocusHandle,
     last_error: Option<String>,
     _runtime_poll_task: GpuiTask<()>,
 }
@@ -29,6 +30,11 @@ pub trait TaskDataSource {
     fn create_task(&mut self, title: &str) -> anyhow::Result<Vec<TaskProjection>>;
     fn launch_agent(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn deliver_review(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
+    fn add_review_comment(
+        &mut self,
+        target: ReviewDraftTarget,
+        body: &str,
+    ) -> anyhow::Result<Vec<TaskProjection>>;
     fn attach_worktree_preview(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn write_terminal(&mut self, session_id: TerminalSessionId, bytes: &[u8])
     -> anyhow::Result<()>;
@@ -94,6 +100,7 @@ impl AppShell {
             task_data_source,
             terminal_focus: cx.focus_handle(),
             context_filter_focus: cx.focus_handle(),
+            review_draft_focus: cx.focus_handle(),
             last_error: None,
             _runtime_poll_task: runtime_poll_task,
         }
@@ -227,6 +234,10 @@ impl AppShell {
             self.deliver_review(task_id, cx);
             return;
         }
+        if command == WorkbenchCommand::SubmitReviewDraft {
+            self.submit_review_draft(cx);
+            return;
+        }
         if let WorkbenchCommand::AttachWorktreePreview(task_id) = command {
             self.attach_worktree_preview(task_id, cx);
             return;
@@ -246,6 +257,10 @@ impl AppShell {
 
     pub(crate) fn context_filter_focus(&self) -> &FocusHandle {
         &self.context_filter_focus
+    }
+
+    pub(crate) fn review_draft_focus(&self) -> &FocusHandle {
+        &self.review_draft_focus
     }
 
     pub(crate) fn handle_context_filter_key(
@@ -273,6 +288,44 @@ impl AppShell {
                     .filter(|text| text.chars().all(|character| !character.is_control()))
                 {
                     self.dispatch(WorkbenchCommand::AppendContextFilter(text), cx);
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn handle_review_draft_key(
+        &mut self,
+        event: &KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let keystroke = event.keystroke.clone().with_simulated_ime();
+        match keystroke.key.as_str() {
+            "escape" => {
+                self.dispatch(WorkbenchCommand::ClearReviewDraft, cx);
+                true
+            }
+            "backspace" => {
+                self.dispatch(WorkbenchCommand::BackspaceReviewDraft, cx);
+                true
+            }
+            "enter" => {
+                self.dispatch(WorkbenchCommand::SubmitReviewDraft, cx);
+                true
+            }
+            _ if !keystroke.modifiers.control
+                && !keystroke.modifiers.alt
+                && !keystroke.modifiers.platform
+                && !keystroke.modifiers.function =>
+            {
+                if let Some(text) = keystroke
+                    .key_char
+                    .filter(|text| text.chars().all(|character| !character.is_control()))
+                {
+                    self.dispatch(WorkbenchCommand::AppendReviewDraft(text), cx);
                     true
                 } else {
                     false
@@ -321,15 +374,32 @@ impl AppShell {
     fn deliver_review(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         match self.task_data_source.deliver_review(task_id) {
             Ok(tasks) => {
-                if !tasks.is_empty() {
-                    let project_label = self.view_model.project_label.clone();
-                    let active_task_id = self.view_model.active_task_id;
-                    self.view_model = WorkspaceViewModel::for_project(project_label, tasks);
-                    if let Some(active_task_id) = active_task_id {
-                        self.view_model
-                            .apply_command(WorkbenchCommand::ActivateTask(active_task_id));
-                    }
-                }
+                self.replace_tasks_preserving_active(tasks);
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn submit_review_draft(&mut self, cx: &mut Context<Self>) {
+        let Some(target) = self.view_model.review_draft.target.clone() else {
+            cx.notify();
+            return;
+        };
+        let body = self.view_model.review_draft.body.trim().to_string();
+        if body.is_empty() {
+            cx.notify();
+            return;
+        }
+
+        match self.task_data_source.add_review_comment(target, &body) {
+            Ok(tasks) => {
+                self.replace_tasks_preserving_active(tasks);
+                self.view_model
+                    .apply_command(WorkbenchCommand::ClearReviewDraft);
                 self.last_error = None;
             }
             Err(error) => {
@@ -342,15 +412,7 @@ impl AppShell {
     fn attach_worktree_preview(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         match self.task_data_source.attach_worktree_preview(task_id) {
             Ok(tasks) => {
-                if !tasks.is_empty() {
-                    let project_label = self.view_model.project_label.clone();
-                    let active_task_id = self.view_model.active_task_id;
-                    self.view_model = WorkspaceViewModel::for_project(project_label, tasks);
-                    if let Some(active_task_id) = active_task_id {
-                        self.view_model
-                            .apply_command(WorkbenchCommand::ActivateTask(active_task_id));
-                    }
-                }
+                self.replace_tasks_preserving_active(tasks);
                 self.last_error = None;
             }
             Err(error) => {
@@ -358,6 +420,18 @@ impl AppShell {
             }
         }
         cx.notify();
+    }
+
+    fn replace_tasks_preserving_active(&mut self, tasks: Vec<TaskProjection>) {
+        if tasks.is_empty() {
+            return;
+        }
+
+        let active_task_id = self.view_model.active_task_id;
+        self.view_model.tasks = tasks;
+        self.view_model.active_task_id = active_task_id
+            .filter(|task_id| self.view_model.tasks.iter().any(|task| task.id == *task_id))
+            .or_else(|| self.view_model.tasks.first().map(|task| task.id));
     }
 
     fn write_terminal(
@@ -484,6 +558,7 @@ impl Render for AppShell {
                         self.theme,
                         &self.view_model,
                         self.context_filter_focus(),
+                        self.review_draft_focus(),
                         cx,
                     )),
             )

@@ -12,8 +12,8 @@ use relay_agent::{
 use relay_core::{
     AgentRuntimeStatus, AgentSessionId, CreateTask, DiffFileProjection, DiffHunkProjection,
     DiffLineProjection, DiffLineProjectionKind, DiffStatsProjection, ProjectId, ProviderFailure,
-    Task, TaskCommand, TaskDiffProjection, TaskId, TaskProjection, TaskSource, TaskStatus,
-    TerminalSessionId,
+    SelectedRange, Task, TaskCommand, TaskDiffProjection, TaskId, TaskProjection, TaskSource,
+    TaskStatus, TerminalSessionId,
 };
 use relay_diff::{DiffEngine, DiffLineKind, DiffSnapshot, ReviewService};
 use relay_infra::paths::RelayPaths;
@@ -21,7 +21,9 @@ use relay_persistence::RelayDatabase;
 use relay_preview::{LocalPreviewProvider, PreviewProvider, PreviewRequest};
 use relay_project::{CreateTaskWorktree, Project, ProjectService};
 use relay_terminal::{PtyProvider, TerminalError, TerminalEvent, TerminalRuntime, TerminalSpawn};
-use relay_ui::{app_shell::TaskDataSource, terminal_pane::TerminalPaneProjection};
+use relay_ui::{
+    app_shell::TaskDataSource, terminal_pane::TerminalPaneProjection, workbench::ReviewDraftTarget,
+};
 use time::OffsetDateTime;
 use url::Url;
 
@@ -230,6 +232,39 @@ impl RelayRuntime {
             &delivery,
             OffsetDateTime::now_utc(),
         ))?;
+        apply_events(&mut task, &events)?;
+        let projection = TaskProjection::from_task(&task);
+        {
+            let mut repository = self.database.task_repository();
+            repository.append_events(&events)?;
+            repository.save_snapshot(&projection)?;
+        }
+        self.list_task_projections()
+    }
+
+    fn add_review_comment_for_target(
+        &mut self,
+        target: ReviewDraftTarget,
+        body: &str,
+    ) -> Result<Vec<TaskProjection>> {
+        let mut task = self
+            .database
+            .task_repository()
+            .load_task(target.task_id)?
+            .context("task not found")?;
+        let selected_range = SelectedRange {
+            start: target.line.clone(),
+            end: target.line.clone(),
+            selected_text: target.selected_text.clone(),
+        };
+        let comment = ReviewService::add_comment(
+            task.id,
+            target.line.path,
+            body,
+            Some(selected_range),
+            OffsetDateTime::now_utc(),
+        )?;
+        let events = task.handle(TaskCommand::AddReviewComment(comment))?;
         apply_events(&mut task, &events)?;
         let projection = TaskProjection::from_task(&task);
         {
@@ -555,6 +590,14 @@ impl TaskDataSource for RelayRuntime {
 
     fn deliver_review(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
         self.deliver_review_for_task(task_id)
+    }
+
+    fn add_review_comment(
+        &mut self,
+        target: ReviewDraftTarget,
+        body: &str,
+    ) -> Result<Vec<TaskProjection>> {
+        self.add_review_comment_for_target(target, body)
     }
 
     fn attach_worktree_preview(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
@@ -1209,6 +1252,54 @@ mod tests {
     }
 
     #[test]
+    fn add_review_comment_should_persist_line_target() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Review line")
+            .expect("task should create");
+        let task_id = tasks[0].id;
+
+        let tasks = runtime
+            .add_review_comment_for_target(review_draft_target(task_id), "Tighten this error path.")
+            .expect("review comment should persist");
+        let task = tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .expect("task should remain listed");
+        let persisted = runtime
+            .database
+            .task_repository()
+            .load_task(task_id)
+            .expect("task should load")
+            .expect("task should exist");
+        let line = persisted.diff_review.comments[0]
+            .line
+            .as_deref()
+            .expect("line target should persist");
+
+        assert_eq!(task.pending_review_comment_count, 1);
+        assert_eq!(line.new_line, Some(42));
+    }
+
+    #[test]
     fn attach_worktree_preview_should_persist_file_target() {
         let temp = tempdir().expect("tempdir should exist");
         let repo = init_git_repo(temp.path().join("repo"));
@@ -1362,6 +1453,20 @@ mod tests {
         )
         .expect("review comment should be valid");
         apply_task_command(runtime, task_id, TaskCommand::AddReviewComment(comment));
+    }
+
+    fn review_draft_target(task_id: TaskId) -> ReviewDraftTarget {
+        ReviewDraftTarget {
+            task_id,
+            line: relay_core::LineIdentity {
+                path: "src/lib.rs".to_string(),
+                side: relay_core::DiffSide::New,
+                old_line: None,
+                new_line: Some(42),
+                hunk_header: "@@ -40,1 +42,1 @@".to_string(),
+            },
+            selected_text: Some("return Err(error);".to_string()),
+        }
     }
 
     fn apply_task_command(runtime: &mut RelayRuntime, task_id: TaskId, command: TaskCommand) {

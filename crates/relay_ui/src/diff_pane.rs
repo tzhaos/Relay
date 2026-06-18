@@ -4,20 +4,23 @@ use gpui::{
 };
 use relay_core::{
     ChangeStatus, ChangedFile, DiffFileProjection, DiffLineProjection, DiffLineProjectionKind,
-    ReviewCommentProjection, TaskProjection,
+    DiffSide, LineIdentity, ReviewCommentProjection, TaskId, TaskProjection,
 };
 use relay_diff::{DiffTree, DiffTreeRow, DiffTreeRowKind};
 
 use crate::{
     app_shell::AppShell,
     theme::RelayTheme,
-    workbench::{ContextTab, WorkbenchCommand, WorkspaceViewModel},
+    workbench::{
+        ContextTab, ReviewDraftState, ReviewDraftTarget, WorkbenchCommand, WorkspaceViewModel,
+    },
 };
 
 pub fn context_pane(
     theme: RelayTheme,
     view_model: &WorkspaceViewModel,
     filter_focus: &FocusHandle,
+    review_draft_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
     let active_task = view_model.active_task();
@@ -40,8 +43,22 @@ pub fn context_pane(
         ))
         .child(match view_model.context_tab {
             ContextTab::Files => files_tab(theme, active_task, filter),
-            ContextTab::Diff => diff_tab(theme, active_task, filter),
-            ContextTab::Review => review_tab(theme, active_task, filter, cx),
+            ContextTab::Diff => diff_tab(
+                theme,
+                active_task,
+                filter,
+                view_model.review_draft.target.as_ref(),
+                review_draft_focus,
+                cx,
+            ),
+            ContextTab::Review => review_tab(
+                theme,
+                active_task,
+                filter,
+                &view_model.review_draft,
+                review_draft_focus,
+                cx,
+            ),
         })
 }
 
@@ -244,15 +261,28 @@ fn files_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> 
         })
 }
 
-fn diff_tab(theme: RelayTheme, task: Option<&TaskProjection>, filter: &str) -> gpui::Div {
+fn diff_tab(
+    theme: RelayTheme,
+    task: Option<&TaskProjection>,
+    filter: &str,
+    review_target: Option<&ReviewDraftTarget>,
+    review_draft_focus: &FocusHandle,
+    cx: &mut Context<AppShell>,
+) -> gpui::Div {
     let diff_files = filtered_diff_files(task, filter);
+    let task_id = task.map(|task| task.id);
+    let review_context = ReviewTargetContext {
+        task_id,
+        selected: review_target,
+        focus: review_draft_focus,
+    };
     let file_count = diff_files.len();
     let (additions, deletions) = task
         .map(|task| (task.diff.stats.additions, task.diff.stats.deletions))
         .unwrap_or_default();
     let mut files = div().flex().flex_col().gap_2();
     for file in &diff_files {
-        files = files.child(diff_file(theme, file));
+        files = files.child(diff_file(theme, file, review_context, cx));
     }
 
     div()
@@ -274,6 +304,8 @@ fn review_tab(
     theme: RelayTheme,
     task: Option<&TaskProjection>,
     filter: &str,
+    draft: &ReviewDraftState,
+    review_draft_focus: &FocusHandle,
     cx: &mut Context<AppShell>,
 ) -> gpui::Div {
     let review_comments = filtered_review_comments(task, filter);
@@ -297,6 +329,7 @@ fn review_tab(
         .flex_col()
         .gap_3()
         .child(summary(theme, task))
+        .child(review_composer(theme, draft, review_draft_focus, cx))
         .child(metric_row(theme, "Comments", review_count.to_string()))
         .child(metric_row(
             theme,
@@ -567,11 +600,23 @@ fn diff_stats_row(
         )
 }
 
-fn diff_file(theme: RelayTheme, file: &DiffFileProjection) -> gpui::Div {
+#[derive(Clone, Copy)]
+struct ReviewTargetContext<'a> {
+    task_id: Option<TaskId>,
+    selected: Option<&'a ReviewDraftTarget>,
+    focus: &'a FocusHandle,
+}
+
+fn diff_file(
+    theme: RelayTheme,
+    file: &DiffFileProjection,
+    review_context: ReviewTargetContext<'_>,
+    cx: &mut Context<AppShell>,
+) -> gpui::Div {
     let (label, color) = change_label(theme, file.status);
     let mut hunks = div().flex().flex_col().gap_1();
     for hunk in &file.hunks {
-        hunks = hunks.child(diff_hunk(theme, hunk));
+        hunks = hunks.child(diff_hunk(theme, &file.path, hunk, review_context, cx));
     }
 
     div()
@@ -621,10 +666,23 @@ fn diff_file(theme: RelayTheme, file: &DiffFileProjection) -> gpui::Div {
         })
 }
 
-fn diff_hunk(theme: RelayTheme, hunk: &relay_core::DiffHunkProjection) -> gpui::Div {
+fn diff_hunk(
+    theme: RelayTheme,
+    path: &str,
+    hunk: &relay_core::DiffHunkProjection,
+    review_context: ReviewTargetContext<'_>,
+    cx: &mut Context<AppShell>,
+) -> gpui::Div {
     let mut lines = div().flex().flex_col();
     for line in &hunk.lines {
-        lines = lines.child(diff_line(theme, line));
+        lines = lines.child(diff_line(
+            theme,
+            path,
+            &hunk.header,
+            line,
+            review_context,
+            cx,
+        ));
     }
 
     div()
@@ -646,7 +704,14 @@ fn diff_hunk(theme: RelayTheme, hunk: &relay_core::DiffHunkProjection) -> gpui::
         .child(lines)
 }
 
-fn diff_line(theme: RelayTheme, line: &DiffLineProjection) -> gpui::Div {
+fn diff_line(
+    theme: RelayTheme,
+    path: &str,
+    hunk_header: &str,
+    line: &DiffLineProjection,
+    review_context: ReviewTargetContext<'_>,
+    cx: &mut Context<AppShell>,
+) -> gpui::AnyElement {
     let (marker, color, background) = match line.kind {
         DiffLineProjectionKind::Added => ("+", theme.accent, theme.selection),
         DiffLineProjectionKind::Deleted => ("-", theme.danger, theme.chrome_alt),
@@ -659,10 +724,28 @@ fn diff_line(theme: RelayTheme, line: &DiffLineProjection) -> gpui::Div {
         (None, Some(new)) => format!("    {new:>3}"),
         (None, None) => "       ".to_string(),
     };
+    let line_identity = line_identity(path, hunk_header, line);
+    let selected = review_context.selected.is_some_and(|target| {
+        review_context
+            .task_id
+            .is_some_and(|task_id| target.task_id == task_id)
+            && target.line == line_identity
+    });
+    let selected_text = if line.content.is_empty() {
+        None
+    } else {
+        Some(line.content.clone())
+    };
 
-    div()
+    let row = div()
         .min_w_0()
         .bg(background)
+        .border_1()
+        .border_color(if selected {
+            theme.selection_line
+        } else {
+            background
+        })
         .px_2()
         .py_0p5()
         .flex()
@@ -687,9 +770,86 @@ fn diff_line(theme: RelayTheme, line: &DiffLineProjection) -> gpui::Div {
         .child(
             div()
                 .min_w_0()
+                .flex_1()
                 .text_color(theme.text)
                 .child(line.content.clone()),
         )
+        .child(note_target_badge(theme, selected));
+
+    if let Some(task_id) = review_context.task_id {
+        let focus_handle = review_context.focus.clone();
+        let element_id = review_line_element_id(task_id, &line_identity);
+        let target = ReviewDraftTarget {
+            task_id,
+            line: line_identity,
+            selected_text,
+        };
+        row.cursor_pointer()
+            .hover(|style| style.bg(theme.panel).border_color(theme.selection_line))
+            .id(element_id)
+            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                this.dispatch(WorkbenchCommand::SelectReviewTarget(target.clone()), cx);
+                window.focus(&focus_handle);
+            }))
+            .into_any_element()
+    } else {
+        row.into_any_element()
+    }
+}
+
+fn review_line_element_id(task_id: TaskId, line: &LineIdentity) -> gpui::ElementId {
+    let side = match line.side {
+        DiffSide::Old => "old",
+        DiffSide::New => "new",
+    };
+    let suffix = format!(
+        "review-line:{}:{}:{}:{}:{}",
+        line.path,
+        side,
+        line.old_line.unwrap_or_default(),
+        line.new_line.unwrap_or_default(),
+        line.hunk_header
+    );
+    gpui::ElementId::from((gpui::ElementId::from(task_id.as_uuid()), suffix))
+}
+
+fn note_target_badge(theme: RelayTheme, selected: bool) -> gpui::Div {
+    div()
+        .flex_shrink_0()
+        .h(px(18.0))
+        .min_w(px(18.0))
+        .rounded_sm()
+        .border_1()
+        .border_color(if selected {
+            theme.selection_line
+        } else {
+            theme.line
+        })
+        .bg(if selected {
+            theme.selection
+        } else {
+            theme.chrome
+        })
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(if selected { theme.text } else { theme.muted })
+        .child("+")
+}
+
+fn line_identity(path: &str, hunk_header: &str, line: &DiffLineProjection) -> LineIdentity {
+    LineIdentity {
+        path: path.to_string(),
+        side: match line.kind {
+            DiffLineProjectionKind::Deleted => DiffSide::Old,
+            DiffLineProjectionKind::Added
+            | DiffLineProjectionKind::Context
+            | DiffLineProjectionKind::NoNewline => DiffSide::New,
+        },
+        old_line: line.old_line,
+        new_line: line.new_line,
+        hunk_header: hunk_header.to_string(),
+    }
 }
 
 fn empty_state(theme: RelayTheme, title: &'static str, detail: &'static str) -> gpui::Div {
@@ -710,6 +870,173 @@ fn empty_state(theme: RelayTheme, title: &'static str, detail: &'static str) -> 
                 .child(title),
         )
         .child(div().text_xs().text_color(theme.muted).child(detail))
+}
+
+fn review_composer(
+    theme: RelayTheme,
+    draft: &ReviewDraftState,
+    review_draft_focus: &FocusHandle,
+    cx: &mut Context<AppShell>,
+) -> gpui::Div {
+    let focus_handle = review_draft_focus.clone();
+    let body_label = if draft.body.is_empty() {
+        "Write a review note".to_string()
+    } else {
+        draft.body.clone()
+    };
+    let target_label = draft
+        .target
+        .as_ref()
+        .map(|target| format!("{} - {}", target.path(), target.line_label()))
+        .unwrap_or_else(|| "No line selected".to_string());
+    let can_submit = draft.target.is_some() && !draft.body.trim().is_empty();
+
+    div()
+        .rounded_sm()
+        .border_1()
+        .border_color(if draft.target.is_some() {
+            theme.selection_line
+        } else {
+            theme.line
+        })
+        .bg(theme.panel)
+        .p_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(theme.text)
+                        .child("New note"),
+                )
+                .child(review_target_state(theme, draft.target.is_some())),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .font_family("Consolas")
+                .text_xs()
+                .text_color(theme.muted)
+                .child(target_label),
+        )
+        .child(
+            div()
+                .min_h(px(34.0))
+                .rounded_md()
+                .border_1()
+                .border_color(if draft.body.is_empty() {
+                    theme.line
+                } else {
+                    theme.selection_line
+                })
+                .bg(theme.chrome)
+                .px_3()
+                .py_2()
+                .flex()
+                .items_center()
+                .text_sm()
+                .text_color(if draft.body.is_empty() {
+                    theme.muted
+                } else {
+                    theme.text
+                })
+                .track_focus(review_draft_focus)
+                .tab_index(0)
+                .cursor(CursorStyle::IBeam)
+                .key_context("ReviewDraft")
+                .focus(|style| style.border_color(theme.selection_line))
+                .on_key_down(cx.listener(|this, event, _, cx| {
+                    if this.handle_review_draft_key(event, cx) {
+                        cx.stop_propagation();
+                    }
+                }))
+                .id("review-draft-input")
+                .on_click(cx.listener(move |_, _: &gpui::ClickEvent, window, _| {
+                    window.focus(&focus_handle);
+                }))
+                .child(div().min_w_0().truncate().child(body_label)),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted)
+                        .child(review_draft_status(draft)),
+                )
+                .child(if can_submit {
+                    save_review_button(theme, cx).into_any_element()
+                } else {
+                    review_state_badge(theme, "DRAFT", theme.muted).into_any_element()
+                }),
+        )
+}
+
+fn review_target_state(theme: RelayTheme, selected: bool) -> gpui::Div {
+    if selected {
+        review_state_badge(theme, "LINE", theme.accent)
+    } else {
+        review_state_badge(theme, "NO LINE", theme.warning)
+    }
+}
+
+fn review_draft_status(draft: &ReviewDraftState) -> &'static str {
+    match (draft.target.is_some(), draft.body.trim().is_empty()) {
+        (false, _) => "No target",
+        (true, true) => "Empty body",
+        (true, false) => "Ready",
+    }
+}
+
+fn review_state_badge(theme: RelayTheme, label: &'static str, color: gpui::Hsla) -> gpui::Div {
+    div()
+        .h(px(22.0))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.line)
+        .bg(theme.chrome_alt)
+        .flex()
+        .items_center()
+        .text_xs()
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(color)
+        .child(label)
+}
+
+fn save_review_button(theme: RelayTheme, cx: &mut Context<AppShell>) -> impl IntoElement {
+    div()
+        .h(px(24.0))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.selection_line)
+        .bg(theme.panel)
+        .flex()
+        .items_center()
+        .text_xs()
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(theme.text)
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.selection))
+        .id("save-review-draft")
+        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+            this.dispatch(WorkbenchCommand::SubmitReviewDraft, cx);
+        }))
+        .child("Save")
 }
 
 fn review_comment(theme: RelayTheme, comment: &ReviewCommentProjection) -> gpui::Div {
