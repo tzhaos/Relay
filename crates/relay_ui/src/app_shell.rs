@@ -2,19 +2,18 @@ use gpui::{
     App, Bounds, Context, IntoElement, Render, Window, WindowBounds, WindowOptions, div,
     prelude::*, px, size,
 };
+use relay_core::{
+    AgentKind, AgentRuntimeStatus, AgentSessionId, AgentStatusUpdate, ChangeStatus, ChangedFile,
+    CreateTask, PreviewTarget, PreviewTargetId, ProjectId, ReviewComment, ReviewCommentId,
+    StatusTone, Task, TaskCommand, TaskProjection, TaskSource, TerminalSessionId, Timestamp,
+    WorktreeId, WorktreeSnapshot,
+};
 
 use crate::theme::RelayTheme;
 
 pub struct AppShell {
     theme: RelayTheme,
-    tasks: Vec<TaskRow>,
-}
-
-#[derive(Clone)]
-struct TaskRow {
-    title: &'static str,
-    status: &'static str,
-    meta: &'static str,
+    tasks: Vec<TaskProjection>,
 }
 
 impl AppShell {
@@ -35,23 +34,7 @@ impl AppShell {
     fn new() -> Self {
         Self {
             theme: RelayTheme::dark(),
-            tasks: vec![
-                TaskRow {
-                    title: "Design GPUI shell",
-                    status: "WORKING",
-                    meta: "relay-ui / main",
-                },
-                TaskRow {
-                    title: "Codex provider spike",
-                    status: "WAITING",
-                    meta: "relay-agent / task-2",
-                },
-                TaskRow {
-                    title: "Diff review model",
-                    status: "DONE",
-                    meta: "relay-diff / task-3",
-                },
-            ],
+            tasks: demo_task_projections(),
         }
     }
 
@@ -116,12 +99,13 @@ impl AppShell {
             .child(list)
     }
 
-    fn task_row(&self, task: &TaskRow) -> impl IntoElement {
-        let status_color = match task.status {
-            "WORKING" => self.theme.accent,
-            "WAITING" => self.theme.warning,
-            "DONE" => self.theme.muted,
-            _ => self.theme.text,
+    fn task_row(&self, task: &TaskProjection) -> impl IntoElement {
+        let status_color = match task.status_tone {
+            StatusTone::Accent => self.theme.accent,
+            StatusTone::Warning => self.theme.warning,
+            StatusTone::Danger => self.theme.danger,
+            StatusTone::Muted => self.theme.muted,
+            StatusTone::Neutral => self.theme.text,
         };
 
         div()
@@ -137,20 +121,25 @@ impl AppShell {
                 div()
                     .text_color(self.theme.text)
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .child(task.title),
+                    .child(task.title.clone()),
             )
             .child(
                 div()
                     .flex()
                     .justify_between()
                     .items_center()
-                    .child(div().text_sm().text_color(self.theme.muted).child(task.meta))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(self.theme.muted)
+                            .child(task.meta.clone()),
+                    )
                     .child(
                         div()
                             .text_xs()
                             .text_color(status_color)
                             .font_weight(gpui::FontWeight::BOLD)
-                            .child(task.status),
+                            .child(task.status_label.clone()),
                     ),
             )
     }
@@ -180,16 +169,33 @@ impl AppShell {
                     .p_4()
                     .text_color(self.theme.text)
                     .child("relay $ claude")
-                    .child(div().mt_2().text_color(self.theme.muted).child(
-                        "Native CLI agent will run here via PTY.",
-                    ))
-                    .child(div().mt_4().text_color(self.theme.accent).child(
-                        "Step 1 target: GPUI shell + pane layout.",
-                    )),
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_color(self.theme.muted)
+                            .child("Native CLI agent will run here via PTY."),
+                    )
+                    .child(
+                        div()
+                            .mt_4()
+                            .text_color(self.theme.accent)
+                            .child("Step 1 target: GPUI shell + pane layout."),
+                    ),
             )
     }
 
     fn context_pane(&self) -> impl IntoElement {
+        let active_task = self.tasks.first();
+        let changed_files = active_task
+            .map(|task| task.changed_file_count.to_string())
+            .unwrap_or_else(|| "0".to_string());
+        let review_comments = active_task
+            .map(|task| task.review_comment_count.to_string())
+            .unwrap_or_else(|| "0".to_string());
+        let preview_targets = active_task
+            .map(|task| task.preview_target_count.to_string())
+            .unwrap_or_else(|| "0".to_string());
+
         div()
             .w(px(360.0))
             .h_full()
@@ -206,9 +212,9 @@ impl AppShell {
                     .text_color(self.theme.muted)
                     .child("FILES / DIFF / REVIEW"),
             )
-            .child(self.context_row("Changed files", "3"))
-            .child(self.context_row("Review comments", "0"))
-            .child(self.context_row("Preview targets", "0"))
+            .child(self.context_row("Changed files", changed_files))
+            .child(self.context_row("Review comments", review_comments))
+            .child(self.context_row("Preview targets", preview_targets))
             .child(
                 div()
                     .mt_4()
@@ -218,11 +224,11 @@ impl AppShell {
                     .bg(self.theme.panel_alt)
                     .p_3()
                     .text_color(self.theme.muted)
-                    .child("Diff viewer and review loop attach here in Step 8."),
+                    .child("Task projection is now fed by relay_core event replay."),
             )
     }
 
-    fn context_row(&self, label: &'static str, value: &'static str) -> impl IntoElement {
+    fn context_row(&self, label: &'static str, value: String) -> impl IntoElement {
         div()
             .flex()
             .justify_between()
@@ -256,5 +262,157 @@ impl Render for AppShell {
                     .child(self.terminal_pane())
                     .child(self.context_pane()),
             )
+    }
+}
+
+fn demo_task_projections() -> Vec<TaskProjection> {
+    let project_id = ProjectId::new();
+    let now = Timestamp::UNIX_EPOCH;
+
+    let mut working = create_demo_task(project_id, "Design GPUI shell", now);
+    apply_demo_event(
+        &mut working,
+        TaskCommand::AttachWorktree {
+            snapshot: WorktreeSnapshot {
+                id: WorktreeId::new(),
+                path: "F:\\Workspace\\Relay".to_string(),
+                branch: "main".to_string(),
+                base_ref: Some("origin/master".to_string()),
+            },
+            now,
+        },
+    );
+    apply_demo_event(
+        &mut working,
+        TaskCommand::AttachTerminal {
+            id: TerminalSessionId::new(),
+            now,
+        },
+    );
+    apply_demo_event(
+        &mut working,
+        TaskCommand::AttachAgent {
+            id: AgentSessionId::new(),
+            kind: AgentKind::Claude,
+            started_at: now,
+        },
+    );
+    apply_demo_event(
+        &mut working,
+        TaskCommand::ApplyAgentStatus(AgentStatusUpdate {
+            state: AgentRuntimeStatus::Working,
+            prompt: "Build GPUI shell".to_string(),
+            agent_kind: Some(AgentKind::Claude),
+            observed_at: now,
+        }),
+    );
+    apply_demo_event(
+        &mut working,
+        TaskCommand::RefreshChangedFiles {
+            files: vec![
+                ChangedFile {
+                    path: "crates/relay_ui/src/app_shell.rs".to_string(),
+                    status: ChangeStatus::Modified,
+                },
+                ChangedFile {
+                    path: "crates/relay_core/src/task.rs".to_string(),
+                    status: ChangeStatus::Added,
+                },
+                ChangedFile {
+                    path: "crates/relay_core/src/task_event.rs".to_string(),
+                    status: ChangeStatus::Added,
+                },
+            ],
+            now,
+        },
+    );
+
+    let mut waiting = create_demo_task(project_id, "Codex provider spike", now);
+    apply_demo_event(
+        &mut waiting,
+        TaskCommand::AttachWorktree {
+            snapshot: WorktreeSnapshot {
+                id: WorktreeId::new(),
+                path: "F:\\Workspace\\Relay\\.worktrees\\codex-spike".to_string(),
+                branch: "task/codex-provider".to_string(),
+                base_ref: Some("origin/master".to_string()),
+            },
+            now,
+        },
+    );
+    apply_demo_event(
+        &mut waiting,
+        TaskCommand::AttachTerminal {
+            id: TerminalSessionId::new(),
+            now,
+        },
+    );
+    apply_demo_event(
+        &mut waiting,
+        TaskCommand::AttachAgent {
+            id: AgentSessionId::new(),
+            kind: AgentKind::Codex,
+            started_at: now,
+        },
+    );
+    apply_demo_event(
+        &mut waiting,
+        TaskCommand::ApplyAgentStatus(AgentStatusUpdate {
+            state: AgentRuntimeStatus::Waiting,
+            prompt: "Probe Codex CLI launch".to_string(),
+            agent_kind: Some(AgentKind::Codex),
+            observed_at: now,
+        }),
+    );
+
+    let mut reviewing = create_demo_task(project_id, "Diff review model", now);
+    let reviewing_id = reviewing.id;
+    apply_demo_event(
+        &mut reviewing,
+        TaskCommand::AddReviewComment(ReviewComment {
+            id: ReviewCommentId::new(),
+            task_id: reviewing_id,
+            path: "crates/relay_diff/src/lib.rs".to_string(),
+            body: "Keep review comments task-scoped.".to_string(),
+            created_at: now,
+        }),
+    );
+    apply_demo_event(
+        &mut reviewing,
+        TaskCommand::AttachPreview {
+            target: PreviewTarget {
+                id: PreviewTargetId::new(),
+                label: "Relay shell".to_string(),
+                uri: "relay://preview/app-shell".to_string(),
+            },
+            now,
+        },
+    );
+
+    vec![
+        TaskProjection::from_task(&working),
+        TaskProjection::from_task(&waiting),
+        TaskProjection::from_task(&reviewing),
+    ]
+}
+
+fn create_demo_task(project_id: ProjectId, title: &str, now: Timestamp) -> Task {
+    let (task, _) = Task::create(CreateTask {
+        id: None,
+        project_id,
+        title: title.to_string(),
+        source: TaskSource::Manual,
+        now,
+    })
+    .expect("demo task should be valid");
+    task
+}
+
+fn apply_demo_event(task: &mut Task, command: TaskCommand) {
+    for event in task
+        .handle(command)
+        .expect("demo transition should be valid")
+    {
+        task.apply(&event).expect("demo event should apply");
     }
 }

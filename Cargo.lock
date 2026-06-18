@@ -1228,6 +1228,9 @@ name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "derive_more"
@@ -4274,6 +4277,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "relay_core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+ "time",
+ "uuid",
+]
+
+[[package]]
 name = "relay_infra"
 version = "0.1.0"
 dependencies = [
@@ -4291,6 +4304,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
+ "relay_core",
  "relay_infra",
 ]
 

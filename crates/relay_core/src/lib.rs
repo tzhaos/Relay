@@ -1,0 +1,24 @@
+pub mod command;
+pub mod error;
+pub mod ids;
+pub mod task;
+pub mod task_event;
+pub mod task_projection;
+
+pub use command::{CreateTask, TaskCommand};
+pub use error::{TaskError, TaskResult};
+pub use ids::{
+    AgentSessionId, PreviewTargetId, ProjectId, ReviewCommentId, TaskId, TerminalSessionId,
+    WorktreeId,
+};
+pub use task::{
+    AgentKind, AgentRuntimeStatus, AgentStatusUpdate, ChangeStatus, ChangedFile, DiffReview,
+    PreviewTarget, ProviderFailure, ReviewComment, Task, TaskSource, TaskStatus, Timestamp,
+    WorktreeSnapshot,
+};
+pub use task_event::{
+    AgentStarted, AgentStatusChanged, ChangedFilesUpdated, PreviewAttached, ProviderFailed,
+    ReviewCommentAdded, ReviewDelivered, TaskArchived, TaskCreated, TaskEvent, TerminalStarted,
+    WorktreeAttached,
+};
+pub use task_projection::{StatusTone, TaskProjection};
