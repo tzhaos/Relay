@@ -20,6 +20,8 @@ pub enum TerminalError {
     Io(#[from] std::io::Error),
     #[error("terminal session not found: {0}")]
     MissingSession(TerminalSessionId),
+    #[error("terminal session already exists: {0}")]
+    SessionAlreadyExists(TerminalSessionId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,11 +102,28 @@ impl TerminalRuntime {
             .get_mut(&id)
             .ok_or(TerminalError::MissingSession(id))
     }
-}
 
-impl PtyProvider for TerminalRuntime {
-    fn spawn(&mut self, request: TerminalSpawn) -> TerminalResult<TerminalSessionId> {
-        let id = TerminalSessionId::new();
+    pub fn has_session(&self, id: TerminalSessionId) -> bool {
+        self.sessions.contains_key(&id)
+    }
+
+    pub fn spawn_with_id(
+        &mut self,
+        id: TerminalSessionId,
+        request: TerminalSpawn,
+    ) -> TerminalResult<TerminalSessionId> {
+        if self.sessions.contains_key(&id) {
+            return Err(TerminalError::SessionAlreadyExists(id));
+        }
+
+        self.spawn_session(id, request)
+    }
+
+    fn spawn_session(
+        &mut self,
+        id: TerminalSessionId,
+        request: TerminalSpawn,
+    ) -> TerminalResult<TerminalSessionId> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -184,6 +203,13 @@ impl PtyProvider for TerminalRuntime {
         );
 
         Ok(id)
+    }
+}
+
+impl PtyProvider for TerminalRuntime {
+    fn spawn(&mut self, request: TerminalSpawn) -> TerminalResult<TerminalSessionId> {
+        let id = TerminalSessionId::new();
+        self.spawn_session(id, request)
     }
 
     fn write(&mut self, session_id: TerminalSessionId, bytes: &[u8]) -> TerminalResult<()> {
@@ -390,6 +416,25 @@ mod tests {
             .expect("snapshot should be available");
 
         assert!(snapshot.exited, "terminal should be marked exited");
+    }
+
+    #[test]
+    fn terminal_runtime_should_spawn_with_existing_logical_id() {
+        let mut runtime = TerminalRuntime::new();
+        let session_id = TerminalSessionId::new();
+
+        let spawned_id = runtime
+            .spawn_with_id(session_id, test_shell())
+            .expect("terminal should spawn with caller id");
+
+        assert_eq!(spawned_id, session_id);
+        assert!(runtime.has_session(session_id));
+        assert!(matches!(
+            runtime
+                .spawn_with_id(session_id, test_shell())
+                .expect_err("duplicate logical id should fail"),
+            TerminalError::SessionAlreadyExists(id) if id == session_id
+        ));
     }
 
     #[cfg(windows)]

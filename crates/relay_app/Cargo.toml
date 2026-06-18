@@ -16,6 +16,7 @@ relay_core.workspace = true
 relay_infra.workspace = true
 relay_persistence.workspace = true
 relay_project.workspace = true
+relay_terminal.workspace = true
 relay_ui.workspace = true
 time.workspace = true
 tracing.workspace = true

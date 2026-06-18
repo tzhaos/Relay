@@ -17,6 +17,7 @@ pub struct TerminalPaneProjection {
     pub title: Option<String>,
     pub scrollback: String,
     pub exited: bool,
+    pub connected: bool,
 }
 
 impl TerminalPaneProjection {
@@ -27,6 +28,7 @@ impl TerminalPaneProjection {
             title: None,
             scrollback: String::new(),
             exited: false,
+            connected: false,
         }
     }
 }
@@ -39,8 +41,10 @@ pub fn terminal_pane(
 ) -> impl IntoElement {
     let status = if projection.exited {
         "EXITED"
-    } else if projection.session_id.is_some() {
+    } else if projection.connected {
         "SESSION"
+    } else if projection.session_id.is_some() {
+        "OFFLINE"
     } else {
         "DETACHED"
     };
@@ -115,8 +119,10 @@ pub fn terminal_pane(
                                 .text_xs()
                                 .text_color(if projection.exited {
                                     theme.muted
-                                } else {
+                                } else if projection.connected {
                                     theme.accent
+                                } else {
+                                    theme.warning
                                 })
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .flex()
@@ -133,8 +139,10 @@ pub fn terminal_pane(
 
 fn terminal_content(theme: RelayTheme, projection: &TerminalPaneProjection) -> gpui::Div {
     let body = if projection.scrollback.is_empty() {
-        if projection.session_id.is_some() {
-            "Terminal runtime is not connected.".to_string()
+        if projection.connected {
+            "Terminal session is connected.".to_string()
+        } else if projection.session_id.is_some() {
+            "Terminal session is not running.".to_string()
         } else {
             "No terminal session attached.".to_string()
         }

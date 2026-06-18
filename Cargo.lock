@@ -4363,6 +4363,7 @@ dependencies = [
  "relay_infra",
  "relay_persistence",
  "relay_project",
+ "relay_terminal",
  "relay_ui",
  "tempfile",
  "time",

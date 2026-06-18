@@ -21,6 +21,7 @@ pub type Timestamp = OffsetDateTime;
 pub enum TaskStatus {
     Draft,
     CreatingWorktree,
+    ReadyForAgent,
     StartingAgent,
     Working,
     WaitingForUser,
@@ -38,6 +39,7 @@ impl TaskStatus {
         match self {
             Self::Draft => "DRAFT",
             Self::CreatingWorktree => "WORKTREE",
+            Self::ReadyForAgent => "READY",
             Self::StartingAgent => "STARTING",
             Self::Working => "WORKING",
             Self::WaitingForUser => "WAITING",
@@ -362,7 +364,7 @@ impl Task {
             }
             TaskEvent::TerminalStarted(event) => {
                 self.terminal_session_id = Some(event.id);
-                self.status = TaskStatus::StartingAgent;
+                self.status = TaskStatus::ReadyForAgent;
                 self.touch(event.occurred_at);
             }
             TaskEvent::AgentStarted(event) => {

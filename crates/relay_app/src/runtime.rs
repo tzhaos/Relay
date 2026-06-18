@@ -1,23 +1,29 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context as _, Result};
 use relay_core::{
-    CreateTask, ProjectId, Task, TaskCommand, TaskProjection, TaskSource, TaskStatus,
+    CreateTask, ProjectId, ProviderFailure, Task, TaskCommand, TaskProjection, TaskSource,
+    TaskStatus, TerminalSessionId,
 };
 use relay_infra::paths::RelayPaths;
 use relay_persistence::RelayDatabase;
 use relay_project::{CreateTaskWorktree, Project, ProjectService};
-use relay_ui::app_shell::TaskDataSource;
+use relay_terminal::{PtyProvider, TerminalError, TerminalRuntime, TerminalSpawn};
+use relay_ui::{app_shell::TaskDataSource, terminal_pane::TerminalPaneProjection};
 use time::OffsetDateTime;
 
 const WORKSPACE_NAMESPACE: &str = "workspace";
 const DEFAULT_PROJECT_ID_KEY: &str = "default_project_id";
 const DEFAULT_PROJECT_ROOT_KEY: &str = "default_project_root";
 const TASK_BRANCH_PREFIX: &str = "relay";
+const TERMINAL_COLS: u16 = 120;
+const TERMINAL_ROWS: u16 = 32;
+const TERMINAL_SCROLLBACK_LIMIT: usize = 128 * 1024;
 
 pub struct RelayRuntime {
     database: RelayDatabase,
     project_service: ProjectService,
+    terminal_runtime: TerminalRuntime,
     project: Project,
     worktrees_dir: PathBuf,
 }
@@ -32,12 +38,15 @@ impl RelayRuntime {
             .join("worktrees")
             .join(project.id.to_string());
 
-        Ok(Self {
+        let mut runtime = Self {
             database,
             project_service,
+            terminal_runtime: TerminalRuntime::new(),
             project,
             worktrees_dir,
-        })
+        };
+        runtime.restore_terminal_sessions()?;
+        Ok(runtime)
     }
 
     pub fn project_label(&self) -> &str {
@@ -73,6 +82,28 @@ impl RelayRuntime {
         })?;
         apply_events(&mut task, &worktree_events)?;
         events.extend(worktree_events);
+
+        match self.spawn_task_terminal(&task) {
+            Ok(terminal_session_id) => {
+                let terminal_events = task.handle(TaskCommand::AttachTerminal {
+                    id: terminal_session_id,
+                    now: OffsetDateTime::now_utc(),
+                })?;
+                apply_events(&mut task, &terminal_events)?;
+                events.extend(terminal_events);
+            }
+            Err(error) => {
+                let failure_events = task.handle(TaskCommand::MarkFailed {
+                    failure: ProviderFailure {
+                        provider: Some("terminal".to_string()),
+                        message: error.to_string(),
+                    },
+                    now: OffsetDateTime::now_utc(),
+                })?;
+                apply_events(&mut task, &failure_events)?;
+                events.extend(failure_events);
+            }
+        }
 
         let projection = TaskProjection::from_task(&task);
         let mut repository = self.database.task_repository();
@@ -126,11 +157,112 @@ impl RelayRuntime {
 
         Ok(())
     }
+
+    fn restore_terminal_sessions(&mut self) -> Result<()> {
+        let task_ids = self
+            .database
+            .task_repository()
+            .list_tasks()?
+            .into_iter()
+            .map(|task| task.id)
+            .collect::<Vec<_>>();
+
+        for task_id in task_ids {
+            let Some(task) = self.database.task_repository().load_task(task_id)? else {
+                continue;
+            };
+            if matches!(task.status, TaskStatus::Archived | TaskStatus::Failed) {
+                continue;
+            }
+            let Some(session_id) = task.terminal_session_id else {
+                continue;
+            };
+            if self.terminal_runtime.has_session(session_id) {
+                continue;
+            }
+            let Some(worktree_path) = task
+                .worktree
+                .as_ref()
+                .map(|worktree| PathBuf::from(&worktree.path))
+            else {
+                continue;
+            };
+            if worktree_path.exists()
+                && let Err(error) = self.spawn_terminal_with_id(session_id, worktree_path)
+            {
+                tracing::warn!(
+                    ?error,
+                    session_id = %session_id,
+                    "failed to restore terminal session"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn spawn_task_terminal(&mut self, task: &Task) -> Result<TerminalSessionId> {
+        let worktree_path = task
+            .worktree
+            .as_ref()
+            .map(|worktree| PathBuf::from(&worktree.path))
+            .context("task has no worktree for terminal")?;
+
+        Ok(self.terminal_runtime.spawn(shell_spawn(worktree_path))?)
+    }
+
+    fn spawn_terminal_with_id(
+        &mut self,
+        session_id: TerminalSessionId,
+        worktree_path: PathBuf,
+    ) -> Result<TerminalSessionId> {
+        Ok(self
+            .terminal_runtime
+            .spawn_with_id(session_id, shell_spawn(worktree_path))?)
+    }
+
+    fn drain_terminal_events(&mut self) -> bool {
+        let mut changed = false;
+        while self.terminal_runtime.poll_event(Duration::ZERO).is_some() {
+            changed = true;
+        }
+        changed
+    }
+
+    fn terminal_projection_for(
+        &mut self,
+        session_id: TerminalSessionId,
+    ) -> Result<Option<TerminalPaneProjection>> {
+        self.drain_terminal_events();
+        match self.terminal_runtime.snapshot(session_id) {
+            Ok(snapshot) => Ok(Some(TerminalPaneProjection {
+                session_id: Some(snapshot.session_id),
+                cwd: snapshot.cwd.to_string_lossy().to_string(),
+                title: snapshot.title,
+                scrollback: snapshot.scrollback,
+                exited: snapshot.exited,
+                connected: true,
+            })),
+            Err(TerminalError::MissingSession(_)) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
 }
 
 impl TaskDataSource for RelayRuntime {
     fn create_task(&mut self, title: &str) -> Result<Vec<TaskProjection>> {
         self.create_task_with_worktree(title)
+    }
+
+    fn poll_runtime(&mut self) -> Result<bool> {
+        Ok(self.drain_terminal_events())
+    }
+
+    fn terminal_projection(
+        &mut self,
+        session_id: TerminalSessionId,
+    ) -> Result<Option<TerminalPaneProjection>> {
+        self.terminal_projection_for(session_id)
     }
 }
 
@@ -196,6 +328,38 @@ fn worktree_title(task: &Task) -> String {
     format!("{} {}", task.title, suffix)
 }
 
+fn shell_spawn(cwd: PathBuf) -> TerminalSpawn {
+    TerminalSpawn {
+        cwd,
+        program: default_shell_program(),
+        args: default_shell_args(),
+        env: Vec::new(),
+        cols: TERMINAL_COLS,
+        rows: TERMINAL_ROWS,
+        scrollback_limit: TERMINAL_SCROLLBACK_LIMIT,
+    }
+}
+
+#[cfg(windows)]
+fn default_shell_program() -> String {
+    std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+}
+
+#[cfg(windows)]
+fn default_shell_args() -> Vec<String> {
+    vec!["/Q".to_string(), "/K".to_string()]
+}
+
+#[cfg(not(windows))]
+fn default_shell_program() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
+}
+
+#[cfg(not(windows))]
+fn default_shell_args() -> Vec<String> {
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path, process::Command};
@@ -226,7 +390,8 @@ mod tests {
             .expect("task should create");
 
         assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].status, TaskStatus::CreatingWorktree);
+        assert_eq!(tasks[0].status, TaskStatus::ReadyForAgent);
+        assert!(tasks[0].has_terminal);
         let worktree_path = tasks[0]
             .worktree_path
             .as_ref()
@@ -264,6 +429,71 @@ mod tests {
         let tasks = runtime.load_tasks().expect("tasks should load");
 
         assert_eq!(tasks[0].changed_file_count, 1);
+    }
+
+    #[test]
+    fn terminal_projection_should_use_live_pty_session() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open(database, &paths).expect("runtime should open");
+        let tasks = runtime
+            .create_task_with_worktree("Connect terminal")
+            .expect("task should create");
+        let session_id = tasks[0]
+            .terminal_session_id
+            .expect("terminal id should be attached");
+
+        let projection = runtime
+            .terminal_projection_for(session_id)
+            .expect("terminal projection should load")
+            .expect("terminal should be live");
+
+        assert!(projection.connected);
+    }
+
+    #[test]
+    fn runtime_open_should_restore_terminal_sessions_for_existing_tasks() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let database_path = temp.path().join("relay.sqlite3");
+        let mut database = RelayDatabase::open(&database_path).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let session_id = {
+            let mut runtime = RelayRuntime::open(database, &paths).expect("runtime should open");
+            runtime
+                .create_task_with_worktree("Restore terminal")
+                .expect("task should create")[0]
+                .terminal_session_id
+                .expect("terminal id should be attached")
+        };
+        let database = RelayDatabase::open(&database_path).expect("database should reopen");
+        let mut runtime = RelayRuntime::open(database, &paths).expect("runtime should reopen");
+
+        let projection = runtime
+            .terminal_projection_for(session_id)
+            .expect("terminal projection should load")
+            .expect("terminal should be restored");
+
+        assert!(projection.connected);
     }
 
     fn init_git_repo(repo: PathBuf) -> PathBuf {

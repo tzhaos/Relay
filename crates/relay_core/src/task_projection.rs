@@ -159,6 +159,8 @@ fn status_tone(status: TaskStatus) -> StatusTone {
         }
         TaskStatus::Blocked | TaskStatus::Failed | TaskStatus::Stale => StatusTone::Danger,
         TaskStatus::Done | TaskStatus::Archived => StatusTone::Muted,
-        TaskStatus::Draft | TaskStatus::ReadyToCommit => StatusTone::Neutral,
+        TaskStatus::Draft | TaskStatus::ReadyForAgent | TaskStatus::ReadyToCommit => {
+            StatusTone::Neutral
+        }
     }
 }

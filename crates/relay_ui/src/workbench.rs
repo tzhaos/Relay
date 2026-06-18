@@ -144,7 +144,10 @@ impl WorkspaceViewModel {
             if task.agent.is_some()
                 && !matches!(
                     task.status,
-                    TaskStatus::Done | TaskStatus::Archived | TaskStatus::Failed
+                    TaskStatus::ReadyForAgent
+                        | TaskStatus::Done
+                        | TaskStatus::Archived
+                        | TaskStatus::Failed
                 )
             {
                 active_agent_count += 1;

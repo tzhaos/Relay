@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use gpui::{
     App, Bounds, Context, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, Render,
-    TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
-    div, prelude::*, px, size,
+    Task as GpuiTask, TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowDecorations,
+    WindowOptions, div, prelude::*, px, size,
 };
-use relay_core::TaskProjection;
+use relay_core::{TaskProjection, TerminalSessionId};
 
 use crate::{
     diff_pane::context_pane,
@@ -19,10 +21,20 @@ pub struct AppShell {
     task_data_source: Box<dyn TaskDataSource>,
     context_filter_focus: FocusHandle,
     last_error: Option<String>,
+    _runtime_poll_task: GpuiTask<()>,
 }
 
 pub trait TaskDataSource {
     fn create_task(&mut self, title: &str) -> anyhow::Result<Vec<TaskProjection>>;
+    fn poll_runtime(&mut self) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+    fn terminal_projection(
+        &mut self,
+        _session_id: TerminalSessionId,
+    ) -> anyhow::Result<Option<TerminalPaneProjection>> {
+        Ok(None)
+    }
 }
 
 impl AppShell {
@@ -58,12 +70,29 @@ impl AppShell {
         task_data_source: Box<dyn TaskDataSource>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let runtime_poll_task = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                if this
+                    .update(cx, |this, cx| {
+                        this.poll_runtime(cx);
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
         Self {
             theme: RelayTheme::orca(),
             view_model: WorkspaceViewModel::for_project(project_label, tasks),
             task_data_source,
             context_filter_focus: cx.focus_handle(),
             last_error: None,
+            _runtime_poll_task: runtime_poll_task,
         }
     }
 
@@ -146,12 +175,12 @@ impl AppShell {
             )
     }
 
-    fn terminal_projection(&self) -> TerminalPaneProjection {
+    fn terminal_projection(&mut self) -> TerminalPaneProjection {
         let Some(active_task) = self.view_model.active_task() else {
             return TerminalPaneProjection::detached();
         };
 
-        TerminalPaneProjection {
+        let mut projection = TerminalPaneProjection {
             session_id: active_task.terminal_session_id,
             cwd: active_task.worktree_path.clone().unwrap_or_default(),
             title: active_task
@@ -160,7 +189,26 @@ impl AppShell {
                 .map(|kind| format!("{} session", kind.label())),
             scrollback: String::new(),
             exited: false,
+            connected: false,
+        };
+
+        if let Some(session_id) = active_task.terminal_session_id {
+            match self.task_data_source.terminal_projection(session_id) {
+                Ok(Some(mut runtime_projection)) => {
+                    if runtime_projection.title.is_none() {
+                        runtime_projection.title = projection.title;
+                    }
+                    projection = runtime_projection;
+                    self.last_error = None;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.last_error = Some(error.to_string());
+                }
+            }
         }
+
+        projection
     }
 
     pub(crate) fn dispatch(&mut self, command: WorkbenchCommand, cx: &mut Context<Self>) {
@@ -226,6 +274,20 @@ impl AppShell {
         cx.notify();
     }
 
+    fn poll_runtime(&mut self, cx: &mut Context<Self>) {
+        match self.task_data_source.poll_runtime() {
+            Ok(true) => {
+                self.last_error = None;
+                cx.notify();
+            }
+            Ok(false) => {}
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+                cx.notify();
+            }
+        }
+    }
+
     fn status_bar(&self) -> impl IntoElement {
         let summary = self.view_model.status_summary();
 
@@ -287,6 +349,8 @@ impl AppShell {
 
 impl Render for AppShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let terminal_projection = self.terminal_projection();
+
         div()
             .size_full()
             .bg(self.theme.bg)
@@ -302,7 +366,7 @@ impl Render for AppShell {
                     .child(terminal_pane(
                         self.theme,
                         &self.view_model,
-                        &self.terminal_projection(),
+                        &terminal_projection,
                         cx,
                     ))
                     .child(context_pane(

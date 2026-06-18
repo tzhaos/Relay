@@ -144,6 +144,7 @@ Initial statuses:
 pub enum TaskStatus {
     Draft,
     CreatingWorktree,
+    ReadyForAgent,
     StartingAgent,
     Working,
     WaitingForUser,
@@ -160,6 +161,7 @@ Status meaning:
 
 - `Draft`: task record exists but no worktree/agent has started.
 - `CreatingWorktree`: task is creating or attaching a git worktree.
+- `ReadyForAgent`: worktree and terminal are ready, but no agent has been launched.
 - `StartingAgent`: terminal exists and CLI agent launch is in progress.
 - `Working`: agent is actively processing.
 - `WaitingForUser`: agent is waiting for user input or next instruction.
