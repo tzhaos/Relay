@@ -2,13 +2,16 @@
 //!
 //! A standalone, fully-interactive showcase app that proves the `relay_ui_kit`
 //! components render and behave at Orca quality in GPUI, with no dependency on
-//! the real workbench domain. Two pages:
+//! the real workbench domain. The gallery is split into several small app-shaped
+//! scenes so components appear in the kind of surface where Relay will use them:
 //!
 //! - **Workbench** — the Orca three-column shell (left rail / center terminal /
 //!   right context). Click tasks to activate them, switch Files/Diff/Review and
 //!   Terminal/Preview, filter the file tree, open the row context menu.
-//! - **Components** — every kit primitive in its states: type in the inputs,
-//!   toggle checkboxes/switches, pick radios, open the dropdown.
+//! - **Terminal** — terminal tabs, agent quick launch, launcher, and command UI.
+//! - **Review** — file tree, Markdown/code preview, and diff review surfaces.
+//! - **Settings** — forms, choices, dropdowns, and feedback states.
+//! - **Foundations** — buttons, icons, badges, rows, tabs, and empty states.
 //!
 //! Interactivity pattern: components carry view-free callbacks
 //! (`Fn(&ClickEvent, &mut Window, &mut App)`). The page render functions receive
@@ -31,7 +34,10 @@ use relay_ui_kit::{ActiveTheme, KitAssets, TitleBar, WorkspaceBreadcrumb, theme}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Workbench,
-    Components,
+    Terminal,
+    Review,
+    Settings,
+    Foundations,
 }
 
 pub struct GalleryApp {
@@ -63,14 +69,20 @@ impl GalleryApp {
                     .items_center()
                     .gap_1()
                     .child(self.page_tab(Page::Workbench, "Workbench", cx))
-                    .child(self.page_tab(Page::Components, "Components", cx)),
+                    .child(self.page_tab(Page::Terminal, "Terminal", cx))
+                    .child(self.page_tab(Page::Review, "Review", cx))
+                    .child(self.page_tab(Page::Settings, "Settings", cx))
+                    .child(self.page_tab(Page::Foundations, "Foundations", cx)),
             )
     }
 
     fn page_label(&self) -> &'static str {
         match self.page {
             Page::Workbench => "Workbench",
-            Page::Components => "Components",
+            Page::Terminal => "Terminal",
+            Page::Review => "Review",
+            Page::Settings => "Settings",
+            Page::Foundations => "Foundations",
         }
     }
 
@@ -119,9 +131,38 @@ impl Render for GalleryApp {
             Page::Workbench => {
                 workbench_demo::render(&self.workbench, &entity, window, cx).into_any_element()
             }
-            Page::Components => {
-                gallery::render(&self.gallery, &entity, window, cx).into_any_element()
-            }
+            Page::Terminal => gallery::render(
+                gallery::GallerySurface::Terminal,
+                &self.gallery,
+                &entity,
+                window,
+                cx,
+            )
+            .into_any_element(),
+            Page::Review => gallery::render(
+                gallery::GallerySurface::Review,
+                &self.gallery,
+                &entity,
+                window,
+                cx,
+            )
+            .into_any_element(),
+            Page::Settings => gallery::render(
+                gallery::GallerySurface::Settings,
+                &self.gallery,
+                &entity,
+                window,
+                cx,
+            )
+            .into_any_element(),
+            Page::Foundations => gallery::render(
+                gallery::GallerySurface::Foundations,
+                &self.gallery,
+                &entity,
+                window,
+                cx,
+            )
+            .into_any_element(),
         };
 
         div()
