@@ -11,11 +11,13 @@ use relay_ui_kit::{ActiveTheme, TextInputState, space};
 
 use crate::GalleryApp;
 
+mod command_scene;
 mod foundations_scene;
 mod product_samples;
 mod review_scene;
 mod settings_scene;
 mod shared;
+mod stress_scene;
 mod terminal_scene;
 mod viewer_samples;
 
@@ -23,8 +25,10 @@ mod viewer_samples;
 pub enum GallerySurface {
     Terminal,
     Review,
+    Command,
     Settings,
     Foundations,
+    Stress,
 }
 
 /// Interactive state shared by the gallery scenes.
@@ -79,12 +83,14 @@ pub fn render(
         GallerySurface::Review => {
             review_scene::render(state, host, window, theme, cx).into_any_element()
         }
+        GallerySurface::Command => command_scene::render(state, host, theme, cx).into_any_element(),
         GallerySurface::Settings => {
             settings_scene::render(state, host, window, theme, cx).into_any_element()
         }
         GallerySurface::Foundations => {
             foundations_scene::render(state, host, theme, cx).into_any_element()
         }
+        GallerySurface::Stress => stress_scene::render(state, host, theme, cx).into_any_element(),
     };
 
     div()

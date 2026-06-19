@@ -1,9 +1,9 @@
-use gpui::{Context, Entity, IntoElement, ParentElement, Styled, div};
+use gpui::{Context, Entity, IntoElement, ParentElement};
 use relay_ui_kit::Theme;
 
 use super::{
     GalleryState,
-    product_samples::{command_sample, launcher_sample, shell_sample, terminal_sample},
+    product_samples::{launcher_sample, shell_sample, terminal_sample},
     shared::{scene_stack, section},
 };
 use crate::GalleryApp;
@@ -22,14 +22,8 @@ pub(super) fn render(
         ))
         .child(section(
             cx,
-            "Launch command",
-            div()
-                .flex()
-                .items_start()
-                .gap_3()
-                .flex_wrap()
-                .child(launcher_sample(state, host, theme))
-                .child(command_sample(state, host)),
+            "Session launcher",
+            launcher_sample(state, host, theme),
         ))
         .child(section(cx, "Shell split", shell_sample(state, host)))
 }

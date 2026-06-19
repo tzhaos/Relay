@@ -2,16 +2,19 @@
 //!
 //! A standalone, fully-interactive showcase app that proves the `relay_ui_kit`
 //! components render and behave at Orca quality in GPUI, with no dependency on
-//! the real workbench domain. The gallery is split into several small app-shaped
-//! scenes so components appear in the kind of surface where Relay will use them:
+//! the real workbench domain. The gallery is a studio that launches several
+//! small app-shaped scenes so components appear in the kind of surface where
+//! Relay will use them:
 //!
 //! - **Workbench** — the Orca three-column shell (left rail / center terminal /
 //!   right context). Click tasks to activate them, switch Files/Diff/Review and
 //!   Terminal/Preview, filter the file tree, open the row context menu.
-//! - **Terminal** — terminal tabs, agent quick launch, launcher, and command UI.
+//! - **Terminal Hub** — terminal tabs, agent quick launch, and session UI.
 //! - **Review** — file tree, Markdown/code preview, and diff review surfaces.
+//! - **Command Center** — command palette, launcher, shortcuts, and menus.
 //! - **Settings** — forms, choices, dropdowns, and feedback states.
 //! - **Foundations** — buttons, icons, badges, rows, tabs, and empty states.
+//! - **Stress Lab** — long labels, dense rows, disabled states, and overflow.
 //!
 //! Interactivity pattern: components carry view-free callbacks
 //! (`Fn(&ClickEvent, &mut Window, &mut App)`). The page render functions receive
@@ -24,11 +27,12 @@ mod gallery;
 mod workbench_demo;
 
 use gpui::{
-    App, AppContext, Application, Bounds, Context, Entity, FocusHandle, FontWeight,
-    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Window, WindowBounds, WindowDecorations, WindowOptions, div, prelude::FluentBuilder, px, size,
+    App, AppContext, Application, Bounds, Context, Entity, FocusHandle, IntoElement, ParentElement,
+    Render, Styled, Window, WindowBounds, WindowDecorations, WindowOptions, div, px, size,
 };
-use relay_ui_kit::{ActiveTheme, KitAssets, TitleBar, WorkspaceBreadcrumb, theme};
+use relay_ui_kit::{
+    ActiveTheme, IconName, KitAssets, NavRow, TitleBar, WorkspaceBreadcrumb, theme,
+};
 
 /// Which gallery page is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,8 +40,10 @@ pub enum Page {
     Workbench,
     Terminal,
     Review,
+    Command,
     Settings,
     Foundations,
+    Stress,
 }
 
 pub struct GalleryApp {
@@ -55,71 +61,111 @@ impl GalleryApp {
         }
     }
 
-    fn top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn top_bar(&self) -> impl IntoElement {
         TitleBar::new("Relay")
             .project("UI Kit")
             .center(WorkspaceBreadcrumb::new(vec![
                 "Relay".into(),
-                "Gallery".into(),
+                "Studio".into(),
                 self.page_label().into(),
             ]))
-            .actions(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(self.page_tab(Page::Workbench, "Workbench", cx))
-                    .child(self.page_tab(Page::Terminal, "Terminal", cx))
-                    .child(self.page_tab(Page::Review, "Review", cx))
-                    .child(self.page_tab(Page::Settings, "Settings", cx))
-                    .child(self.page_tab(Page::Foundations, "Foundations", cx)),
-            )
     }
 
     fn page_label(&self) -> &'static str {
         match self.page {
             Page::Workbench => "Workbench",
-            Page::Terminal => "Terminal",
-            Page::Review => "Review",
+            Page::Terminal => "Terminal Hub",
+            Page::Review => "Review Desk",
+            Page::Command => "Command Center",
             Page::Settings => "Settings",
-            Page::Foundations => "Foundations",
+            Page::Foundations => "Foundation Lab",
+            Page::Stress => "Stress Lab",
         }
     }
 
-    fn page_tab(
-        &self,
-        page: Page,
-        label: &'static str,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn page_icon(page: Page) -> IconName {
+        match page {
+            Page::Workbench => IconName::PanelLeft,
+            Page::Terminal => IconName::Terminal,
+            Page::Review => IconName::FileDiff,
+            Page::Command => IconName::Zap,
+            Page::Settings => IconName::Settings,
+            Page::Foundations => IconName::LayoutGrid,
+            Page::Stress => IconName::ListChecks,
+        }
+    }
+
+    fn page_count(page: Page) -> Option<usize> {
+        match page {
+            Page::Review => Some(3),
+            Page::Command => Some(4),
+            Page::Stress => Some(9),
+            _ => None,
+        }
+    }
+
+    fn catalog(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
-        let is_active = self.page == page;
         div()
-            .id(label)
-            .h(px(26.0))
+            .w(px(relay_ui_kit::space::RAIL_WIDTH))
+            .flex_shrink_0()
+            .h_full()
             .px_3()
+            .py_3()
             .flex()
-            .items_center()
-            .rounded(px(theme::radius::MD))
-            .text_xs()
-            .font_weight(if is_active {
-                FontWeight::SEMIBOLD
-            } else {
-                FontWeight::MEDIUM
-            })
-            .when(is_active, |this| {
-                this.bg(theme.selection).text_color(theme.text)
-            })
-            .when(!is_active, |this| {
-                this.text_color(theme.text_muted)
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(theme.hover).text_color(theme.text_secondary))
-            })
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.page = page;
-                cx.notify();
-            }))
-            .child(label)
+            .flex_col()
+            .gap_1()
+            .border_r_1()
+            .border_color(theme.border)
+            .bg(theme.chrome)
+            .child(self.catalog_row(Page::Workbench, cx))
+            .child(self.catalog_row(Page::Terminal, cx))
+            .child(self.catalog_row(Page::Review, cx))
+            .child(self.catalog_row(Page::Command, cx))
+            .child(self.catalog_row(Page::Settings, cx))
+            .child(self.catalog_row(Page::Foundations, cx))
+            .child(self.catalog_row(Page::Stress, cx))
+    }
+
+    fn catalog_row(&self, page: Page, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut row = NavRow::new(
+            Self::page_key(page),
+            Self::page_icon(page),
+            self.page_label_for(page),
+        )
+        .selected(self.page == page)
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.page = page;
+            cx.notify();
+        }));
+        if let Some(count) = Self::page_count(page) {
+            row = row.count(count);
+        }
+        row
+    }
+
+    fn page_key(page: Page) -> &'static str {
+        match page {
+            Page::Workbench => "studio-workbench",
+            Page::Terminal => "studio-terminal",
+            Page::Review => "studio-review",
+            Page::Command => "studio-command",
+            Page::Settings => "studio-settings",
+            Page::Foundations => "studio-foundations",
+            Page::Stress => "studio-stress",
+        }
+    }
+
+    fn page_label_for(&self, page: Page) -> &'static str {
+        match page {
+            Page::Workbench => "Workbench",
+            Page::Terminal => "Terminal Hub",
+            Page::Review => "Review Desk",
+            Page::Command => "Command Center",
+            Page::Settings => "Settings",
+            Page::Foundations => "Foundation Lab",
+            Page::Stress => "Stress Lab",
+        }
     }
 }
 
@@ -147,6 +193,14 @@ impl Render for GalleryApp {
                 cx,
             )
             .into_any_element(),
+            Page::Command => gallery::render(
+                gallery::GallerySurface::Command,
+                &self.gallery,
+                &entity,
+                window,
+                cx,
+            )
+            .into_any_element(),
             Page::Settings => gallery::render(
                 gallery::GallerySurface::Settings,
                 &self.gallery,
@@ -163,6 +217,14 @@ impl Render for GalleryApp {
                 cx,
             )
             .into_any_element(),
+            Page::Stress => gallery::render(
+                gallery::GallerySurface::Stress,
+                &self.gallery,
+                &entity,
+                window,
+                cx,
+            )
+            .into_any_element(),
         };
 
         div()
@@ -172,8 +234,15 @@ impl Render for GalleryApp {
             .font_family(theme::ui_family())
             .flex()
             .flex_col()
-            .child(self.top_bar(cx))
-            .child(div().flex_1().min_h_0().child(body))
+            .child(self.top_bar())
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(self.catalog(cx))
+                    .child(div().flex_1().min_w_0().min_h_0().child(body)),
+            )
     }
 }
 
