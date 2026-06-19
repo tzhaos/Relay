@@ -4504,7 +4504,6 @@ dependencies = [
 name = "relay_ui_kit"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "gpui",
  "pulldown-cmark",
  "similar",

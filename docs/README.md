@@ -14,6 +14,7 @@ Relay is a Rust + GPUI high-performance AI development workbench:
 - [UI Design Contract](../DESIGN.md)
 - [UI Design Workflow](design/README.md)
 - [Architecture Investigation](architecture-investigation.html)
+- [UI Kit Motion and Architecture Review](reviews/2026-06-19-ui-kit-motion-architecture.md)
 - [RFC-001: Domain Model](rfc-001-domain-model.md)
 - [RFC-002: Crate Layout](rfc-002-crate-layout.md)
 - [RFC-003: Agent Runtime](rfc-003-agent-runtime.md)
@@ -25,6 +26,8 @@ Relay is a Rust + GPUI high-performance AI development workbench:
 - [ADR-0002: Use Provider Boundaries Around External Libraries](adr/0002-use-provider-boundaries.md)
 - [ADR-0003: CLI Agent First](adr/0003-cli-agent-first.md)
 - [ADR-0004: Use Published GPUI Crate First](adr/0004-use-published-gpui-crate-first.md)
+- [ADR-0005: Evaluate Rio Before Adopting Rioterm](adr/0005-evaluate-rio-terminal-rendering.md)
+- [ADR-0006: Extract Relay UI Kit and Gallery as a Standalone Project](adr/0006-extract-ui-kit-gallery.md)
 
 ## Current Direction
 

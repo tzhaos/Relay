@@ -20,10 +20,12 @@ pub mod choice;
 pub mod command;
 pub mod controls;
 pub mod display;
+pub mod feedback;
 pub mod git;
 pub mod icon;
 pub mod input;
 pub mod launcher;
+pub mod motion;
 pub mod overlay;
 pub mod row;
 pub mod shell;
@@ -39,12 +41,14 @@ pub use choice::{Checkbox, Radio, Toggle};
 pub use command::{CommandPalette, CommandRow, KeyboardShortcut};
 pub use controls::{PanelHeader, SearchField, Segment, SegmentedControl};
 pub use display::{Badge, BadgeStyle, Divider, EmptyState, StatusDot};
+pub use feedback::{Banner, InlineError, LoadingSpinner, ProgressBar, Skeleton, Toast};
 pub use git::{
     BranchActionKind, BranchActionsMenu, BranchOption, BranchPickerAction, BranchSelector,
 };
 pub use icon::{Icon, IconName, IconSize, KitAssets};
 pub use input::{TextInput, TextInputAction, TextInputState};
 pub use launcher::{LauncherItem, LauncherItemKind, LauncherMenu};
+pub use motion::{MotionDirection, MotionDuration, MotionExt};
 pub use overlay::{Menu, MenuItem, Overlay, TooltipBody, overlay};
 pub use row::{NavRow, TaskRow, TaskRowData, TreeRow};
 pub use shell::{
