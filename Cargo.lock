@@ -4397,6 +4397,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "relay_gallery"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "relay_ui_kit",
+]
+
+[[package]]
 name = "relay_infra"
 version = "0.1.0"
 dependencies = [
@@ -4462,6 +4470,15 @@ dependencies = [
  "relay_core",
  "relay_diff",
  "relay_infra",
+]
+
+[[package]]
+name = "relay_ui_kit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "unicode-segmentation",
 ]
 
 [[package]]
