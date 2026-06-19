@@ -6,8 +6,8 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use relay_agent::{
-    AgentLaunchPlan, AgentMessage, AgentRegistry, PromptDelivery, RuntimeEnvironment,
-    initial_prompt_request,
+    AgentLaunchPlan, AgentLaunchRequest, AgentMessage, AgentRegistry, PromptDelivery,
+    RuntimeEnvironment, initial_prompt_request,
 };
 use relay_core::{
     AgentRuntimeStatus, AgentSessionId, CreateTask, DiffFileProjection, DiffHunkProjection,
@@ -49,6 +49,7 @@ pub struct RelayRuntime {
     preview_provider: LocalPreviewProvider,
     preview_opener: Box<dyn PreviewOpener>,
     terminal_task_ids: HashMap<TerminalSessionId, TaskId>,
+    workspace_terminal_session_id: Option<TerminalSessionId>,
     project: Option<Project>,
     worktrees_root: PathBuf,
 }
@@ -95,9 +96,13 @@ impl RelayRuntime {
             preview_provider: LocalPreviewProvider,
             preview_opener: Box::new(SystemPreviewOpener),
             terminal_task_ids,
+            workspace_terminal_session_id: None,
             project,
             worktrees_root,
         };
+        if runtime.project.is_some() {
+            runtime.ensure_workspace_terminal()?;
+        }
         runtime.restore_terminal_sessions()?;
         Ok(runtime)
     }
@@ -107,8 +112,10 @@ impl RelayRuntime {
             return Ok(WorkspaceData::detached());
         };
         let project_label = project.display_name.clone();
+        let workspace_terminal_session_id = self.ensure_workspace_terminal()?;
         Ok(WorkspaceData::for_project(
             project_label,
+            workspace_terminal_session_id,
             self.load_tasks()?,
         ))
     }
@@ -126,7 +133,9 @@ impl RelayRuntime {
         let project = open_project_at(&mut self.database, &self.project_service, path)?;
         self.terminal_runtime = TerminalRuntime::new();
         self.terminal_task_ids = load_terminal_task_ids(&mut self.database, project.id)?;
+        self.workspace_terminal_session_id = None;
         self.project = Some(project);
+        self.ensure_workspace_terminal()?;
         self.restore_terminal_sessions()?;
         self.workspace_data()
     }
@@ -237,6 +246,35 @@ impl RelayRuntime {
             repository.save_snapshot(&projection)?;
         }
         self.list_task_projections()
+    }
+
+    fn launch_agent_in_terminal(&mut self, session_id: TerminalSessionId) -> Result<()> {
+        if !self.terminal_runtime.has_session(session_id) {
+            if Some(session_id) == self.workspace_terminal_session_id {
+                let project = self.require_project()?;
+                self.spawn_terminal_with_id(session_id, project.root)?;
+            } else {
+                return Err(anyhow!("terminal session is not running: {session_id}"));
+            }
+        }
+
+        let snapshot = self.terminal_runtime.snapshot(session_id)?;
+        let env = RuntimeEnvironment::current()?;
+        let availability = self
+            .agent_registry
+            .detect_available(&env)
+            .into_iter()
+            .find(|candidate| candidate.available)
+            .ok_or_else(|| anyhow!("no available agent CLI found: {}", self.agent_labels()))?;
+        let plan = self.agent_registry.launch_plan(
+            &availability.kind,
+            AgentLaunchRequest {
+                cwd: snapshot.cwd,
+                initial_prompt: None,
+                env: Vec::new(),
+            },
+        )?;
+        self.write_agent_launch(session_id, &plan)
     }
 
     fn deliver_review_for_task(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
@@ -630,6 +668,19 @@ impl RelayRuntime {
             .spawn_with_id(session_id, shell_spawn(worktree_path))?)
     }
 
+    fn ensure_workspace_terminal(&mut self) -> Result<TerminalSessionId> {
+        if let Some(session_id) = self.workspace_terminal_session_id
+            && self.terminal_runtime.has_session(session_id)
+        {
+            return Ok(session_id);
+        }
+
+        let project = self.require_project()?;
+        let session_id = self.terminal_runtime.spawn(shell_spawn(project.root))?;
+        self.workspace_terminal_session_id = Some(session_id);
+        Ok(session_id)
+    }
+
     fn drain_terminal_events(&mut self) -> Result<bool> {
         let mut changed = false;
         while let Some(event) = self.terminal_runtime.poll_event(Duration::ZERO) {
@@ -710,15 +761,20 @@ impl RelayRuntime {
 
     fn write_terminal_input(&mut self, session_id: TerminalSessionId, bytes: &[u8]) -> Result<()> {
         if !self.terminal_runtime.has_session(session_id) {
-            let task = self
-                .task_for_terminal(session_id)?
-                .context("terminal session is not attached to a task")?;
-            let worktree_path = task
-                .worktree
-                .as_ref()
-                .map(|worktree| PathBuf::from(&worktree.path))
-                .context("task has no worktree")?;
-            self.spawn_terminal_with_id(session_id, worktree_path)?;
+            if Some(session_id) == self.workspace_terminal_session_id {
+                let project = self.require_project()?;
+                self.spawn_terminal_with_id(session_id, project.root)?;
+            } else {
+                let task = self
+                    .task_for_terminal(session_id)?
+                    .context("terminal session is not attached to a task")?;
+                let worktree_path = task
+                    .worktree
+                    .as_ref()
+                    .map(|worktree| PathBuf::from(&worktree.path))
+                    .context("task has no worktree")?;
+                self.spawn_terminal_with_id(session_id, worktree_path)?;
+            }
         }
 
         self.terminal_runtime.write(session_id, bytes)?;
@@ -883,6 +939,10 @@ impl TaskDataSource for RelayRuntime {
 
     fn launch_agent(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
         self.launch_agent_for_task(task_id)
+    }
+
+    fn launch_agent_terminal(&mut self, session_id: TerminalSessionId) -> Result<()> {
+        self.launch_agent_in_terminal(session_id)
     }
 
     fn deliver_review(&mut self, task_id: TaskId) -> Result<Vec<TaskProjection>> {
@@ -1298,6 +1358,7 @@ mod tests {
 
         assert!(!workspace.project_open);
         assert_eq!(workspace.project_label, "No project");
+        assert!(workspace.workspace_terminal_session_id.is_none());
         assert!(workspace.tasks.is_empty());
     }
 
@@ -1358,7 +1419,94 @@ mod tests {
 
         assert!(workspace.project_open);
         assert_eq!(workspace.project_label, "repo");
+        assert!(workspace.workspace_terminal_session_id.is_some());
         assert!(workspace.tasks.is_empty());
+    }
+
+    #[test]
+    fn workspace_data_should_include_live_project_terminal() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open(database, &paths).expect("runtime should open");
+
+        let workspace = runtime
+            .workspace_data()
+            .expect("workspace data should load");
+        let session_id = workspace
+            .workspace_terminal_session_id
+            .expect("workspace terminal id should exist");
+        let projection = runtime
+            .terminal_projection_for(session_id)
+            .expect("terminal projection should load")
+            .expect("workspace terminal should be live");
+
+        assert!(projection.connected);
+        assert_eq!(PathBuf::from(projection.cwd), repo);
+    }
+
+    #[test]
+    fn launch_agent_in_workspace_terminal_should_write_real_cli_command() {
+        let temp = tempdir().expect("tempdir should exist");
+        let repo = init_git_repo(temp.path().join("repo"));
+        let paths = RelayPaths {
+            data_dir: temp.path().join("data"),
+            config_dir: temp.path().join("config"),
+            log_dir: temp.path().join("logs"),
+        };
+        let mut database =
+            RelayDatabase::open(temp.path().join("relay.sqlite3")).expect("database should open");
+        database
+            .settings_repository()
+            .set_json(WORKSPACE_NAMESPACE, DEFAULT_PROJECT_ROOT_KEY, &repo)
+            .expect("project root should save");
+        let mut runtime = RelayRuntime::open_with_agent_registry(
+            database,
+            &paths,
+            AgentRegistry::with_adapters(vec![Box::new(TestAgentAdapter)]),
+        )
+        .expect("runtime should open");
+        let session_id = runtime
+            .workspace_data()
+            .expect("workspace data should load")
+            .workspace_terminal_session_id
+            .expect("workspace terminal should exist");
+
+        runtime
+            .launch_agent_in_terminal(session_id)
+            .expect("agent command should write to workspace terminal");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut scrollback = String::new();
+        while Instant::now() < deadline {
+            runtime
+                .drain_terminal_events()
+                .expect("terminal events should drain");
+            scrollback = runtime
+                .terminal_projection_for(session_id)
+                .expect("terminal projection should load")
+                .expect("terminal should be live")
+                .scrollback;
+            if scrollback.contains("working") && scrollback.contains("done") {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        assert!(
+            scrollback.contains("working") && scrollback.contains("done"),
+            "unexpected scrollback: {scrollback}"
+        );
     }
 
     #[test]

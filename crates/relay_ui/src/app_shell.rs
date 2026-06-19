@@ -5,16 +5,17 @@ use std::{
 
 use gpui::{
     App, Bounds, Context, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    PathPromptOptions, Render, Task as GpuiTask, TitlebarOptions, Window, WindowBounds,
-    WindowControlArea, WindowDecorations, WindowOptions, div, prelude::*, px, size,
+    PathPromptOptions, Render, Task as GpuiTask, Window, WindowBounds, WindowControlArea,
+    WindowDecorations, WindowOptions, div, prelude::*, px, size,
 };
 use relay_core::{PreviewTargetId, TaskId, TaskProjection, TerminalSessionId};
 
 use crate::{
+    components::{ComposerKey, composer_key_handler},
     diff_pane::context_pane,
     task_list::task_list,
     terminal_pane::{TerminalPaneProjection, terminal_pane},
-    theme::RelayTheme,
+    theme::{RelayTheme, spacing},
     workbench::{PaneRoute, ReviewDraftTarget, WorkbenchCommand, WorkspaceViewModel},
 };
 
@@ -35,6 +36,7 @@ pub trait TaskDataSource {
     fn refresh_changed_files(&mut self) -> anyhow::Result<Vec<TaskProjection>>;
     fn create_task(&mut self, title: &str) -> anyhow::Result<Vec<TaskProjection>>;
     fn launch_agent(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
+    fn launch_agent_terminal(&mut self, session_id: TerminalSessionId) -> anyhow::Result<()>;
     fn deliver_review(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn archive_task(&mut self, task_id: TaskId) -> anyhow::Result<Vec<TaskProjection>>;
     fn add_review_comment(
@@ -66,6 +68,7 @@ pub trait TaskDataSource {
 pub struct WorkspaceData {
     pub project_label: String,
     pub project_open: bool,
+    pub workspace_terminal_session_id: Option<TerminalSessionId>,
     pub tasks: Vec<TaskProjection>,
 }
 
@@ -74,14 +77,20 @@ impl WorkspaceData {
         Self {
             project_label: "No project".to_string(),
             project_open: false,
+            workspace_terminal_session_id: None,
             tasks: Vec::new(),
         }
     }
 
-    pub fn for_project(project_label: String, tasks: Vec<TaskProjection>) -> Self {
+    pub fn for_project(
+        project_label: String,
+        workspace_terminal_session_id: TerminalSessionId,
+        tasks: Vec<TaskProjection>,
+    ) -> Self {
         Self {
             project_label,
             project_open: true,
+            workspace_terminal_session_id: Some(workspace_terminal_session_id),
             tasks,
         }
     }
@@ -97,11 +106,7 @@ impl AppShell {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Relay".into()),
-                    appears_transparent: true,
-                    ..Default::default()
-                }),
+                titlebar: None,
                 window_decorations: Some(WindowDecorations::Client),
                 window_min_size: Some(size(px(1180.0), px(780.0))),
                 app_id: Some("relay".to_string()),
@@ -139,6 +144,7 @@ impl AppShell {
             view_model: WorkspaceViewModel::from_workspace(
                 workspace.project_label,
                 workspace.project_open,
+                workspace.workspace_terminal_session_id,
                 workspace.tasks,
             ),
             task_data_source,
@@ -153,47 +159,61 @@ impl AppShell {
 
     fn title_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let summary = self.view_model.status_summary();
+        let worktree_label = self.view_model.active_worktree_label();
+        let branch_label = self.view_model.active_branch_label();
+        let has_worktree = self
+            .view_model
+            .active_task()
+            .is_some_and(|task| task.worktree_path.is_some());
 
         div()
             .flex()
             .items_center()
             .justify_between()
-            .h(px(42.0))
+            .h(px(spacing::TITLE_BAR))
             .pl_3()
+            .pr_1()
             .border_b_1()
-            .border_color(self.theme.line)
+            .border_color(self.theme.border)
             .bg(self.theme.chrome)
             .child(
+                // Left: Relay identity + project name. Drag region for window moving.
                 div()
-                    .min_w_0()
+                    .w(px(spacing::RAIL_WIDTH))
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .gap_2()
+                    .min_w_0()
                     .window_control_area(WindowControlArea::Drag)
                     .child(title_mark(self.theme))
                     .child(
                         div()
                             .min_w_0()
                             .flex()
-                            .flex_col()
+                            .items_center()
+                            .gap_1()
                             .child(
                                 div()
-                                    .truncate()
                                     .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(self.theme.text)
-                                    .font_weight(gpui::FontWeight::BOLD)
                                     .child("Relay"),
                             )
                             .child(
                                 div()
+                                    .min_w_0()
                                     .truncate()
-                                    .text_xs()
-                                    .text_color(self.theme.muted)
-                                    .child(self.view_model.active_worktree_label()),
+                                    .text_sm()
+                                    .text_color(self.theme.text_muted)
+                                    .child(self.view_model.project_label.clone()),
                             ),
                     ),
             )
             .child(
+                // Center: worktree + branch context badges (drag region). Shows
+                // an operational hint when no worktree is active rather than a
+                // raw "no worktree" label.
                 div()
                     .min_w_0()
                     .flex_1()
@@ -204,64 +224,82 @@ impl AppShell {
                     .window_control_area(WindowControlArea::Drag)
                     .child(title_badge(
                         self.theme,
-                        self.view_model.project_label.clone(),
+                        if has_worktree {
+                            worktree_label
+                        } else {
+                            "No active worktree".to_string()
+                        },
+                        has_worktree,
                     ))
                     .child(title_badge(
                         self.theme,
-                        self.view_model.active_branch_label(),
+                        if has_worktree {
+                            branch_label
+                        } else {
+                            format!("{} tasks", summary.task_count)
+                        },
+                        has_worktree,
                     )),
             )
             .child(
+                // Right: Open Project action + window controls.
                 div()
                     .flex_shrink_0()
                     .h_full()
                     .flex()
                     .items_center()
-                    .child(title_action_button(self.theme, "Open", cx))
-                    .child(header_stat(
-                        self.theme,
-                        "Tasks",
-                        summary.task_count.to_string(),
-                    ))
-                    .child(header_stat(
-                        self.theme,
-                        "Agents",
-                        summary.active_agent_count.to_string(),
-                    ))
+                    .gap_2()
+                    .child(title_action_button(self.theme, "Open Project", cx))
                     .child(window_controls(self.theme, window)),
             )
     }
 
     fn terminal_projection(&mut self) -> TerminalPaneProjection {
-        let Some(active_task) = self.view_model.active_task() else {
+        let task_terminal = self.view_model.active_task().and_then(|task| {
+            task.terminal_session_id.map(|session_id| {
+                (
+                    session_id,
+                    task.worktree_path.clone().unwrap_or_default(),
+                    task.agent
+                        .as_ref()
+                        .map(|kind| format!("{} session", kind.label())),
+                )
+            })
+        });
+        let workspace_terminal = self
+            .view_model
+            .workspace_terminal_session_id
+            .map(|session_id| {
+                (
+                    session_id,
+                    self.view_model.project_label.clone(),
+                    Some("Workspace terminal".to_string()),
+                )
+            });
+        let Some((session_id, cwd, title)) = task_terminal.or(workspace_terminal) else {
             return TerminalPaneProjection::detached();
         };
 
         let mut projection = TerminalPaneProjection {
-            session_id: active_task.terminal_session_id,
-            cwd: active_task.worktree_path.clone().unwrap_or_default(),
-            title: active_task
-                .agent
-                .as_ref()
-                .map(|kind| format!("{} session", kind.label())),
+            session_id: Some(session_id),
+            cwd,
+            title,
             scrollback: String::new(),
             exited: false,
             connected: false,
         };
 
-        if let Some(session_id) = active_task.terminal_session_id {
-            match self.task_data_source.terminal_projection(session_id) {
-                Ok(Some(mut runtime_projection)) => {
-                    if runtime_projection.title.is_none() {
-                        runtime_projection.title = projection.title;
-                    }
-                    projection = runtime_projection;
-                    self.last_error = None;
+        match self.task_data_source.terminal_projection(session_id) {
+            Ok(Some(mut runtime_projection)) => {
+                if runtime_projection.title.is_none() {
+                    runtime_projection.title = projection.title;
                 }
-                Ok(None) => {}
-                Err(error) => {
-                    self.last_error = Some(error.to_string());
-                }
+                projection = runtime_projection;
+                self.last_error = None;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                self.last_error = Some(error.to_string());
             }
         }
 
@@ -283,6 +321,10 @@ impl AppShell {
         }
         if let WorkbenchCommand::LaunchAgent(task_id) = command {
             self.launch_agent(task_id, cx);
+            return;
+        }
+        if let WorkbenchCommand::LaunchAgentTerminal(session_id) = command {
+            self.launch_agent_terminal(session_id, cx);
             return;
         }
         if let WorkbenchCommand::DeliverReview(task_id) = command {
@@ -361,6 +403,7 @@ impl AppShell {
                 self.view_model = WorkspaceViewModel::from_workspace(
                     workspace.project_label,
                     workspace.project_open,
+                    workspace.workspace_terminal_session_id,
                     workspace.tasks,
                 );
                 self.last_error = None;
@@ -412,32 +455,21 @@ impl AppShell {
         event: &KeyDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
-        let keystroke = event.keystroke.clone().with_simulated_ime();
-        match keystroke.key.as_str() {
-            "escape" => {
+        match composer_key_handler(event, false) {
+            Some(ComposerKey::Clear) => {
                 self.dispatch(WorkbenchCommand::ClearContextFilter, cx);
                 true
             }
-            "backspace" => {
+            Some(ComposerKey::Backspace) => {
                 self.dispatch(WorkbenchCommand::BackspaceContextFilter, cx);
                 true
             }
-            _ if !keystroke.modifiers.control
-                && !keystroke.modifiers.alt
-                && !keystroke.modifiers.platform
-                && !keystroke.modifiers.function =>
-            {
-                if let Some(text) = keystroke
-                    .key_char
-                    .filter(|text| text.chars().all(|character| !character.is_control()))
-                {
-                    self.dispatch(WorkbenchCommand::AppendContextFilter(text), cx);
-                    true
-                } else {
-                    false
-                }
+            Some(ComposerKey::Append(text)) => {
+                self.dispatch(WorkbenchCommand::AppendContextFilter(text), cx);
+                true
             }
-            _ => false,
+            // The context filter has no submit action (Enter is not handled here).
+            Some(ComposerKey::Submit) | None => false,
         }
     }
 
@@ -446,36 +478,24 @@ impl AppShell {
         event: &KeyDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
-        let keystroke = event.keystroke.clone().with_simulated_ime();
-        match keystroke.key.as_str() {
-            "escape" => {
+        match composer_key_handler(event, true) {
+            Some(ComposerKey::Clear) => {
                 self.dispatch(WorkbenchCommand::ClearTaskTitleDraft, cx);
                 true
             }
-            "backspace" => {
+            Some(ComposerKey::Backspace) => {
                 self.dispatch(WorkbenchCommand::BackspaceTaskTitleDraft, cx);
                 true
             }
-            "enter" => {
+            Some(ComposerKey::Submit) => {
                 self.dispatch(WorkbenchCommand::CreateTask, cx);
                 true
             }
-            _ if !keystroke.modifiers.control
-                && !keystroke.modifiers.alt
-                && !keystroke.modifiers.platform
-                && !keystroke.modifiers.function =>
-            {
-                if let Some(text) = keystroke
-                    .key_char
-                    .filter(|text| text.chars().all(|character| !character.is_control()))
-                {
-                    self.dispatch(WorkbenchCommand::AppendTaskTitleDraft(text), cx);
-                    true
-                } else {
-                    false
-                }
+            Some(ComposerKey::Append(text)) => {
+                self.dispatch(WorkbenchCommand::AppendTaskTitleDraft(text), cx);
+                true
             }
-            _ => false,
+            None => false,
         }
     }
 
@@ -484,36 +504,24 @@ impl AppShell {
         event: &KeyDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
-        let keystroke = event.keystroke.clone().with_simulated_ime();
-        match keystroke.key.as_str() {
-            "escape" => {
+        match composer_key_handler(event, true) {
+            Some(ComposerKey::Clear) => {
                 self.dispatch(WorkbenchCommand::ClearReviewDraft, cx);
                 true
             }
-            "backspace" => {
+            Some(ComposerKey::Backspace) => {
                 self.dispatch(WorkbenchCommand::BackspaceReviewDraft, cx);
                 true
             }
-            "enter" => {
+            Some(ComposerKey::Submit) => {
                 self.dispatch(WorkbenchCommand::SubmitReviewDraft, cx);
                 true
             }
-            _ if !keystroke.modifiers.control
-                && !keystroke.modifiers.alt
-                && !keystroke.modifiers.platform
-                && !keystroke.modifiers.function =>
-            {
-                if let Some(text) = keystroke
-                    .key_char
-                    .filter(|text| text.chars().all(|character| !character.is_control()))
-                {
-                    self.dispatch(WorkbenchCommand::AppendReviewDraft(text), cx);
-                    true
-                } else {
-                    false
-                }
+            Some(ComposerKey::Append(text)) => {
+                self.dispatch(WorkbenchCommand::AppendReviewDraft(text), cx);
+                true
             }
-            _ => false,
+            None => false,
         }
     }
 
@@ -554,6 +562,18 @@ impl AppShell {
                             .apply_command(WorkbenchCommand::ActivateTask(active_task_id));
                     }
                 }
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn launch_agent_terminal(&mut self, session_id: TerminalSessionId, cx: &mut Context<Self>) {
+        match self.task_data_source.launch_agent_terminal(session_id) {
+            Ok(()) => {
                 self.last_error = None;
             }
             Err(error) => {
@@ -707,12 +727,12 @@ impl AppShell {
         let summary = self.view_model.status_summary();
 
         div()
-            .h(px(28.0))
+            .h(px(spacing::STATUS_BAR))
             .flex_shrink_0()
             .px_3()
             .border_t_1()
-            .border_color(self.theme.line)
-            .bg(self.theme.chrome_alt)
+            .border_color(self.theme.border)
+            .bg(self.theme.chrome)
             .flex()
             .items_center()
             .justify_between()
@@ -768,7 +788,7 @@ impl Render for AppShell {
 
         div()
             .size_full()
-            .bg(self.theme.bg)
+            .bg(self.theme.app_bg)
             .flex()
             .flex_col()
             .child(self.title_bar(window, cx))
@@ -805,57 +825,45 @@ impl Render for AppShell {
 
 fn title_mark(theme: RelayTheme) -> gpui::Div {
     div()
-        .w(px(24.0))
-        .h(px(24.0))
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.line)
-        .bg(theme.panel)
+        .w(px(22.0))
+        .h(px(22.0))
+        .rounded_md()
+        .bg(theme.accent)
         .flex()
         .items_center()
         .justify_center()
         .font_weight(gpui::FontWeight::BOLD)
-        .text_color(theme.text)
+        .text_color(theme.terminal_text)
         .child("R")
 }
 
-fn title_badge(theme: RelayTheme, label: String) -> gpui::Div {
+/// A context badge in the title bar. `active` highlights the badge (green) when
+/// there is a real worktree/branch; otherwise it renders quietly.
+fn title_badge(theme: RelayTheme, label: String, active: bool) -> gpui::Div {
+    let (bg, border, fg) = if active {
+        (theme.accent_bg, theme.accent_border, theme.accent)
+    } else {
+        (theme.panel_alt, theme.border, theme.text_muted)
+    };
     div()
-        .h(px(26.0))
-        .max_w(px(220.0))
-        .px_3()
+        .h(px(24.0))
+        .max_w(px(240.0))
+        .px_2()
         .rounded_md()
         .border_1()
-        .border_color(theme.line)
-        .bg(theme.panel)
-        .flex()
-        .items_center()
-        .text_sm()
-        .text_color(theme.text)
-        .child(div().truncate().child(label))
-}
-
-fn header_stat(theme: RelayTheme, label: &'static str, value: String) -> gpui::Div {
-    div()
-        .h(px(26.0))
-        .mr_2()
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.line)
-        .bg(theme.chrome_alt)
+        .border_color(border)
+        .bg(bg)
         .flex()
         .items_center()
         .gap_1()
         .text_sm()
-        .child(div().text_color(theme.muted).child(label))
-        .child(
-            div()
-                .max_w(px(80.0))
-                .truncate()
-                .text_color(theme.text)
-                .child(value),
-        )
+        .font_weight(if active {
+            gpui::FontWeight::SEMIBOLD
+        } else {
+            gpui::FontWeight::MEDIUM
+        })
+        .text_color(fg)
+        .child(div().truncate().child(label))
 }
 
 fn title_action_button(
@@ -865,11 +873,10 @@ fn title_action_button(
 ) -> impl IntoElement {
     div()
         .h(px(26.0))
-        .mr_2()
         .px_3()
-        .rounded_sm()
+        .rounded_md()
         .border_1()
-        .border_color(theme.line)
+        .border_color(theme.border_strong)
         .bg(theme.panel)
         .flex()
         .items_center()
@@ -877,7 +884,7 @@ fn title_action_button(
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(theme.text)
         .cursor_pointer()
-        .hover(|style| style.bg(theme.selection))
+        .hover(|style| style.bg(theme.hover).border_color(theme.accent_border))
         .id("open-project")
         .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
             this.dispatch(WorkbenchCommand::OpenProject, cx);
@@ -892,6 +899,7 @@ fn window_controls(theme: RelayTheme, window: &Window) -> gpui::Div {
         .h_full()
         .flex()
         .items_center()
+        .ml_1()
         .window_control_area(WindowControlArea::Drag)
         .child(window_control_button(
             theme,
@@ -926,13 +934,13 @@ fn window_control_button(
         .items_center()
         .justify_center()
         .text_lg()
-        .text_color(theme.muted)
+        .text_color(theme.text_muted)
         .window_control_area(area)
         .hover(move |style| {
             if danger {
                 style.bg(theme.danger).text_color(gpui::white())
             } else {
-                style.bg(theme.selection).text_color(theme.text)
+                style.bg(theme.hover).text_color(theme.text)
             }
         })
         .child(label)
@@ -944,12 +952,17 @@ fn status_bar_item(theme: RelayTheme, label: &'static str, value: String) -> gpu
         .flex()
         .items_center()
         .gap_1()
-        .child(div().flex_shrink_0().text_color(theme.muted).child(label))
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_color(theme.text_muted)
+                .child(label),
+        )
         .child(
             div()
                 .min_w_0()
                 .truncate()
-                .text_color(theme.text)
+                .text_color(theme.text_secondary)
                 .child(value),
         )
 }

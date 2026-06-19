@@ -11,7 +11,8 @@ use relay_diff::{DiffTree, DiffTreeRow, DiffTreeRowKind};
 
 use crate::{
     app_shell::AppShell,
-    theme::RelayTheme,
+    components::{self, ButtonEmphasis, Tone},
+    theme::{RelayTheme, mono_family, spacing},
     workbench::{
         ContextTab, ReviewDraftState, ReviewDraftTarget, WorkbenchCommand, WorkspaceViewModel,
     },
@@ -28,10 +29,11 @@ pub fn context_pane(
     let filter = view_model.context_filter.as_str();
 
     div()
-        .w(px(380.0))
+        .w(px(spacing::CONTEXT_WIDTH))
         .h_full()
+        .flex_shrink_0()
         .border_l_1()
-        .border_color(theme.line)
+        .border_color(theme.border)
         .bg(theme.chrome)
         .flex()
         .flex_col()
@@ -79,7 +81,7 @@ fn header(
         .flex_col()
         .gap_2()
         .border_b_1()
-        .border_color(theme.line)
+        .border_color(theme.border)
         .child(
             div()
                 .flex()
@@ -89,8 +91,9 @@ fn header(
                     div()
                         .min_w_0()
                         .truncate()
+                        .text_sm()
                         .text_color(theme.text)
-                        .font_weight(gpui::FontWeight::BOLD)
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child("Context"),
                 )
                 .child(
@@ -99,24 +102,15 @@ fn header(
                         .items_center()
                         .gap_2()
                         .child(refresh_button(theme, project_open, cx))
-                        .child(
-                            div()
-                                .rounded_sm()
-                                .bg(theme.chrome_alt)
-                                .px_2()
-                                .py_1()
-                                .text_xs()
-                                .text_color(theme.muted)
-                                .child(active_tab.label()),
-                        ),
+                        .child(components::badge(theme, active_tab.label(), Tone::Muted)),
                 ),
         )
         .child(search_field(theme, filter, filter_focus, cx))
         .child(
             div()
-                .h(px(32.0))
+                .h(px(30.0))
                 .rounded_md()
-                .bg(theme.chrome_alt)
+                .bg(theme.inset)
                 .p_0p5()
                 .flex()
                 .items_center()
@@ -131,36 +125,32 @@ fn refresh_button(
     project_open: bool,
     cx: &mut Context<AppShell>,
 ) -> gpui::AnyElement {
-    let button = div()
-        .h(px(24.0))
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.line)
-        .bg(theme.panel)
-        .flex()
-        .items_center()
-        .text_xs()
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(if project_open {
-            theme.text
-        } else {
-            theme.muted
-        })
-        .id("refresh-changed-files")
-        .child("Refresh");
-
-    if project_open {
-        button
-            .cursor_pointer()
-            .hover(|style| style.bg(theme.selection))
-            .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                this.dispatch(WorkbenchCommand::RefreshChangedFiles, cx);
-            }))
-            .into_any_element()
-    } else {
-        button.into_any_element()
+    if !project_open {
+        return div()
+            .h(px(24.0))
+            .px_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.panel_alt)
+            .flex()
+            .items_center()
+            .text_xs()
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(theme.text_muted)
+            .child("Refresh")
+            .into_any_element();
     }
+    components::button(
+        theme,
+        "Refresh",
+        ButtonEmphasis::Secondary,
+        "refresh-changed-files",
+        cx,
+        |this, cx| {
+            this.dispatch(WorkbenchCommand::RefreshChangedFiles, cx);
+        },
+    )
 }
 
 fn search_field(
@@ -177,13 +167,13 @@ fn search_field(
     };
 
     div()
-        .h(px(32.0))
+        .h(px(30.0))
         .rounded_md()
         .border_1()
         .border_color(if filter.is_empty() {
-            theme.line
+            theme.border
         } else {
-            theme.selection_line
+            theme.border_strong
         })
         .bg(theme.panel)
         .px_3()
@@ -192,7 +182,7 @@ fn search_field(
         .gap_2()
         .text_sm()
         .text_color(if filter.is_empty() {
-            theme.muted
+            theme.text_muted
         } else {
             theme.text
         })
@@ -200,7 +190,7 @@ fn search_field(
         .tab_index(0)
         .cursor(CursorStyle::IBeam)
         .key_context("ContextFilter")
-        .hover(|style| style.border_color(theme.selection_line))
+        .hover(|style| style.border_color(theme.border_strong))
         .on_key_down(cx.listener(|this, event, _, cx| {
             if this.handle_context_filter_key(event, cx) {
                 cx.stop_propagation();
@@ -215,12 +205,13 @@ fn search_field(
 }
 
 fn search_glyph(theme: RelayTheme) -> gpui::Div {
+    // A quiet magnifier stand-in: a small bordered square in muted ink.
     div()
-        .w(px(14.0))
-        .h(px(14.0))
-        .rounded_md()
+        .w(px(12.0))
+        .h(px(12.0))
+        .rounded_sm()
         .border_1()
-        .border_color(theme.muted)
+        .border_color(theme.text_muted)
 }
 
 fn tab(
@@ -230,30 +221,36 @@ fn tab(
     label: &'static str,
     cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
+    let is_active = active_tab == tab;
     div()
-        .h(px(28.0))
+        .h(px(26.0))
         .flex_1()
         .px_2()
         .rounded_sm()
-        .border_1()
-        .border_color(if active_tab == tab {
-            theme.selection
-        } else {
-            theme.chrome_alt
-        })
-        .bg(if active_tab == tab {
+        .bg(if is_active {
             theme.panel
         } else {
-            theme.chrome_alt
+            gpui::transparent_black()
         })
         .text_sm()
-        .text_color(if active_tab == tab {
+        .font_weight(if is_active {
+            gpui::FontWeight::SEMIBOLD
+        } else {
+            gpui::FontWeight::MEDIUM
+        })
+        .text_color(if is_active {
             theme.text
         } else {
-            theme.muted
+            theme.text_muted
         })
         .cursor_pointer()
-        .hover(|style| style.bg(theme.panel))
+        .hover(move |style| {
+            style.text_color(if is_active {
+                theme.text
+            } else {
+                theme.text_secondary
+            })
+        })
         .flex()
         .items_center()
         .justify_center()
@@ -311,9 +308,13 @@ fn files_tab(
         .gap_3()
         .child(summary(theme, task))
         .child(if row_count == 0 {
-            empty_state(theme, "No matching files", "File list is empty.")
+            components::empty_state(
+                theme,
+                "No matching files",
+                "Adjust the filter or refresh changed files.",
+            )
         } else {
-            rows
+            rows.into_any_element()
         })
         .into_any_element()
 }
@@ -355,9 +356,13 @@ fn diff_tab(
         .child(summary(theme, task))
         .child(diff_stats_row(theme, file_count, additions, deletions))
         .child(if file_count == 0 {
-            empty_state(theme, "No matching diffs", "Changed file list is empty.")
+            components::empty_state(
+                theme,
+                "No matching diffs",
+                "Run an agent or refresh to capture changes.",
+            )
         } else {
-            files
+            files.into_any_element()
         })
         .into_any_element()
 }
@@ -405,7 +410,7 @@ fn review_tab(
         .child(
             div()
                 .border_b_1()
-                .border_color(theme.line)
+                .border_color(theme.border)
                 .py_2()
                 .flex()
                 .items_center()
@@ -418,18 +423,22 @@ fn review_tab(
                 .map(|draft| commit_draft_panel(theme, draft).into_any_element()),
         )
         .child(if review_count == 0 {
-            empty_state(theme, "No matching review notes", "Review list is empty.")
+            components::empty_state(
+                theme,
+                "No review notes",
+                "Click a diff line to attach a comment, then write your note.",
+            )
         } else {
-            comments
+            comments.into_any_element()
         })
         .into_any_element()
 }
 
 fn commit_draft_panel(theme: RelayTheme, draft: &TaskCommitDraftProjection) -> gpui::Div {
     div()
-        .rounded_sm()
+        .rounded_md()
         .border_1()
-        .border_color(theme.line)
+        .border_color(theme.border)
         .bg(theme.panel)
         .p_3()
         .flex()
@@ -443,11 +452,11 @@ fn commit_draft_panel(theme: RelayTheme, draft: &TaskCommitDraftProjection) -> g
                 .child(
                     div()
                         .text_sm()
-                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(theme.text)
                         .child("Commit draft"),
                 )
-                .child(review_state_badge(theme, "DRAFT", theme.accent)),
+                .child(components::badge(theme, "DRAFT", Tone::Accent)),
         )
         .child(commit_draft_field(theme, "Title", &draft.title))
         .child(commit_draft_field(theme, "Body", &draft.body))
@@ -457,16 +466,16 @@ fn commit_draft_field(theme: RelayTheme, label: &'static str, value: &str) -> gp
     div()
         .rounded_sm()
         .border_1()
-        .border_color(theme.line)
-        .bg(theme.chrome)
+        .border_color(theme.border)
+        .bg(theme.inset)
         .p_2()
         .flex()
         .flex_col()
         .gap_1()
-        .child(div().text_xs().text_color(theme.muted).child(label))
+        .child(div().text_xs().text_color(theme.text_muted).child(label))
         .child(
             div()
-                .font_family("Consolas")
+                .font_family(mono_family())
                 .text_xs()
                 .text_color(theme.text)
                 .child(value.to_string()),
@@ -523,6 +532,9 @@ fn summary(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
     let title = task
         .map(|task| task.title.clone())
         .unwrap_or_else(|| "No active task".to_string());
+    let status_tone = task
+        .map(|task| tone_from_status_tone(task.status_tone))
+        .unwrap_or(Tone::Muted);
     let status = task
         .map(|task| task.status_label.clone())
         .unwrap_or_else(|| "DETACHED".to_string());
@@ -530,7 +542,7 @@ fn summary(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
     div()
         .pb_2()
         .border_b_1()
-        .border_color(theme.line)
+        .border_color(theme.border)
         .flex()
         .flex_col()
         .gap_1()
@@ -544,25 +556,20 @@ fn summary(theme: RelayTheme, task: Option<&TaskProjection>) -> gpui::Div {
                     div()
                         .min_w_0()
                         .truncate()
+                        .text_sm()
                         .text_color(theme.text)
+                        .font_weight(gpui::FontWeight::MEDIUM)
                         .child(title),
                 )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(theme.muted)
-                        .child(status),
-                ),
+                .child(components::flat_label(theme, &status, status_tone)),
         )
         .child(
             div()
                 .min_w_0()
                 .truncate()
-                .font_family("Consolas")
+                .font_family(mono_family())
                 .text_xs()
-                .text_color(theme.muted)
+                .text_color(theme.text_muted)
                 .child(
                     task.map_or_else(|| "No task metadata".to_string(), |task| task.meta.clone()),
                 ),
@@ -575,26 +582,22 @@ fn file_row(
     file: &ChangedFile,
     cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
-    let (label, color) = match file.status {
-        ChangeStatus::Added => ("A", theme.accent),
-        ChangeStatus::Modified => ("M", theme.warning),
-        ChangeStatus::Deleted => ("D", theme.danger),
-        ChangeStatus::Renamed => ("R", theme.warning),
-        ChangeStatus::Untracked => ("U", theme.accent),
-    };
+    let tone = change_tone(file.status);
     let path = file.path.clone();
 
     div()
         .rounded_md()
-        .px_3()
-        .py_2()
+        .px_2()
+        .py_1()
         .flex()
         .items_center()
         .justify_between()
         .gap_2()
-        .bg(theme.chrome)
+        .bg(theme.panel)
+        .border_1()
+        .border_color(theme.border)
         .cursor_pointer()
-        .hover(|style| style.bg(theme.panel).border_color(theme.selection_line))
+        .hover(|style| style.bg(theme.hover).border_color(theme.border_strong))
         .id((
             gpui::ElementId::from(gpui::SharedString::from(path.clone())),
             "changed-file",
@@ -608,19 +611,17 @@ fn file_row(
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(color)
-                        .child(label),
-                )
+                .child(components::flat_label(
+                    theme,
+                    change_label(file.status),
+                    tone,
+                ))
                 .child(
                     div()
                         .min_w_0()
                         .truncate()
                         .text_sm()
+                        .font_family(mono_family())
                         .text_color(theme.text)
                         .child(file.path.clone()),
                 ),
@@ -640,7 +641,8 @@ fn tree_row(
             .py_1()
             .ml(px((row.depth as f32) * 12.0))
             .text_xs()
-            .text_color(theme.muted)
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(theme.text_muted)
             .child(format!("{}/  {}", row.label, row.file_count))
             .into_any_element(),
         DiffTreeRowKind::File => {
@@ -672,39 +674,25 @@ fn preview_file_action(
     }
 
     let path = file.path.clone();
-    Some(
-        div()
-            .flex_shrink_0()
-            .h(px(22.0))
-            .px_2()
-            .rounded_sm()
-            .border_1()
-            .border_color(theme.selection_line)
-            .bg(theme.panel)
-            .flex()
-            .items_center()
-            .text_xs()
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .text_color(theme.text)
-            .cursor_pointer()
-            .hover(|style| style.bg(theme.selection))
-            .id((
-                gpui::ElementId::from(gpui::SharedString::from(path.clone())),
-                "preview-file",
-            ))
-            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                this.dispatch(
-                    WorkbenchCommand::AttachFilePreview {
-                        task_id,
-                        path: path.clone(),
-                    },
-                    cx,
-                );
-                cx.stop_propagation();
-            }))
-            .child("Preview")
-            .into_any_element(),
-    )
+    Some(components::button(
+        theme,
+        "Preview",
+        ButtonEmphasis::Secondary,
+        (
+            gpui::ElementId::from(gpui::SharedString::from(path.clone())),
+            "preview-file",
+        ),
+        cx,
+        move |this, cx| {
+            this.dispatch(
+                WorkbenchCommand::AttachFilePreview {
+                    task_id,
+                    path: path.clone(),
+                },
+                cx,
+            );
+        },
+    ))
 }
 
 fn delivery_control(
@@ -714,54 +702,30 @@ fn delivery_control(
     cx: &mut Context<AppShell>,
 ) -> gpui::AnyElement {
     if let Some(task) = task {
-        return deliver_review_button(theme, task.id, cx).into_any_element();
+        let task_id = task.id;
+        return components::button(
+            theme,
+            "Deliver",
+            ButtonEmphasis::Primary,
+            (gpui::ElementId::from(task_id.as_uuid()), "deliver-review"),
+            cx,
+            move |this, cx| {
+                this.dispatch(WorkbenchCommand::DeliverReview(task_id), cx);
+            },
+        );
     }
 
-    let (label, color) = if pending_count == 0 {
-        ("CLEAN", theme.muted)
+    let tone = if pending_count == 0 {
+        Tone::Muted
     } else {
-        ("NEEDS AGENT", theme.warning)
+        Tone::Warning
     };
-    div()
-        .h(px(24.0))
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.line)
-        .bg(theme.chrome_alt)
-        .flex()
-        .items_center()
-        .text_xs()
-        .font_weight(gpui::FontWeight::BOLD)
-        .text_color(color)
-        .child(label)
-        .into_any_element()
-}
-
-fn deliver_review_button(
-    theme: RelayTheme,
-    task_id: relay_core::TaskId,
-    cx: &mut Context<AppShell>,
-) -> impl IntoElement {
-    div()
-        .h(px(24.0))
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.selection_line)
-        .bg(theme.panel)
-        .flex()
-        .items_center()
-        .text_xs()
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(theme.text)
-        .cursor_pointer()
-        .hover(|style| style.bg(theme.selection))
-        .id((gpui::ElementId::from(task_id.as_uuid()), "deliver-review"))
-        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            this.dispatch(WorkbenchCommand::DeliverReview(task_id), cx);
-        }))
-        .child("Deliver")
+    let label = if pending_count == 0 {
+        "CLEAN"
+    } else {
+        "NEEDS AGENT"
+    };
+    components::badge(theme, label, tone)
 }
 
 fn diff_stats_row(
@@ -775,6 +739,7 @@ fn diff_stats_row(
         .items_center()
         .justify_between()
         .gap_2()
+        .text_sm()
         .text_color(theme.text)
         .child("Diff")
         .child(
@@ -783,20 +748,18 @@ fn diff_stats_row(
                 .items_center()
                 .gap_2()
                 .text_xs()
-                .text_color(theme.muted)
+                .text_color(theme.text_muted)
                 .child(format!("{file_count} files"))
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(theme.accent)
-                        .child(format!("+{additions}")),
-                )
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(theme.danger)
-                        .child(format!("-{deletions}")),
-                ),
+                .child(components::flat_label(
+                    theme,
+                    &format!("+{additions}"),
+                    Tone::Accent,
+                ))
+                .child(components::flat_label(
+                    theme,
+                    &format!("-{deletions}"),
+                    Tone::Danger,
+                )),
         )
 }
 
@@ -813,18 +776,19 @@ fn diff_file(
     review_context: ReviewTargetContext<'_>,
     cx: &mut Context<AppShell>,
 ) -> gpui::Div {
-    let (label, color) = change_label(theme, file.status);
+    let tone = change_tone(file.status);
+    let label = change_label(file.status);
     let mut hunks = div().flex().flex_col().gap_1();
     for hunk in &file.hunks {
         hunks = hunks.child(diff_hunk(theme, &file.path, hunk, review_context, cx));
     }
 
     div()
-        .rounded_sm()
+        .rounded_md()
         .border_1()
-        .border_color(theme.line)
-        .bg(theme.chrome_alt)
-        .p_3()
+        .border_color(theme.border)
+        .bg(theme.panel)
+        .p_2()
         .flex()
         .flex_col()
         .gap_2()
@@ -833,33 +797,28 @@ fn diff_file(
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(
-                    div()
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(color)
-                        .child(label),
-                )
+                .child(components::flat_label(theme, label, tone))
                 .child(
                     div()
                         .min_w_0()
                         .truncate()
                         .text_sm()
+                        .font_family(mono_family())
                         .text_color(theme.text)
                         .child(file.path.clone()),
                 ),
         )
         .child(if file.is_binary {
             div()
-                .font_family("Consolas")
+                .font_family(mono_family())
                 .text_xs()
-                .text_color(theme.muted)
+                .text_color(theme.text_muted)
                 .child("binary file")
         } else if file.hunks.is_empty() {
             div()
-                .font_family("Consolas")
+                .font_family(mono_family())
                 .text_xs()
-                .text_color(theme.muted)
+                .text_color(theme.text_muted)
                 .child("no line hunks")
         } else {
             hunks
@@ -887,17 +846,19 @@ fn diff_hunk(
 
     div()
         .border_1()
-        .border_color(theme.line)
-        .bg(theme.panel)
+        .border_color(theme.border)
+        .bg(theme.inset)
+        .rounded_sm()
+        .overflow_hidden()
         .flex()
         .flex_col()
         .child(
             div()
                 .px_2()
                 .py_1()
-                .font_family("Consolas")
+                .font_family(mono_family())
                 .text_xs()
-                .text_color(theme.muted)
+                .text_color(theme.text_muted)
                 .bg(theme.chrome)
                 .child(hunk.header.clone()),
         )
@@ -912,12 +873,13 @@ fn diff_line(
     review_context: ReviewTargetContext<'_>,
     cx: &mut Context<AppShell>,
 ) -> gpui::AnyElement {
-    let (marker, color, background) = match line.kind {
-        DiffLineProjectionKind::Added => ("+", theme.accent, theme.selection),
-        DiffLineProjectionKind::Deleted => ("-", theme.danger, theme.chrome_alt),
-        DiffLineProjectionKind::NoNewline => ("\\", theme.muted, theme.panel),
-        DiffLineProjectionKind::Context => (" ", theme.muted, theme.panel),
+    let (marker, tone, background) = match line.kind {
+        DiffLineProjectionKind::Added => ("+", Tone::Accent, theme.accent_bg),
+        DiffLineProjectionKind::Deleted => ("-", Tone::Danger, theme.panel_alt),
+        DiffLineProjectionKind::NoNewline => ("\\", Tone::Muted, theme.panel),
+        DiffLineProjectionKind::Context => (" ", Tone::Muted, theme.panel),
     };
+    let marker_color = tone.fg(theme);
     let line_label = match (line.old_line, line.new_line) {
         (Some(old), Some(new)) => format!("{old:>3} {new:>3}"),
         (Some(old), None) => format!("{old:>3}    "),
@@ -942,7 +904,7 @@ fn diff_line(
         .bg(background)
         .border_1()
         .border_color(if selected {
-            theme.selection_line
+            theme.accent_border
         } else {
             background
         })
@@ -951,20 +913,21 @@ fn diff_line(
         .flex()
         .items_start()
         .gap_2()
-        .font_family("Consolas")
+        .font_family(mono_family())
         .text_xs()
         .child(
             div()
                 .flex_shrink_0()
                 .w(px(54.0))
-                .text_color(theme.muted)
+                .text_color(theme.text_muted)
                 .child(line_label),
         )
         .child(
             div()
                 .flex_shrink_0()
                 .w(px(10.0))
-                .text_color(color)
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(marker_color)
                 .child(marker),
         )
         .child(
@@ -985,7 +948,7 @@ fn diff_line(
             selected_text,
         };
         row.cursor_pointer()
-            .hover(|style| style.bg(theme.panel).border_color(theme.selection_line))
+            .hover(|style| style.bg(theme.hover).border_color(theme.border_strong))
             .id(element_id)
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
                 this.dispatch(WorkbenchCommand::SelectReviewTarget(target.clone()), cx);
@@ -1021,19 +984,24 @@ fn note_target_badge(theme: RelayTheme, selected: bool) -> gpui::Div {
         .rounded_sm()
         .border_1()
         .border_color(if selected {
-            theme.selection_line
+            theme.accent_border
         } else {
-            theme.line
+            theme.border
         })
         .bg(if selected {
-            theme.selection
+            theme.accent_bg
         } else {
-            theme.chrome
+            gpui::transparent_black()
         })
         .flex()
         .items_center()
         .justify_center()
-        .text_color(if selected { theme.text } else { theme.muted })
+        .text_xs()
+        .text_color(if selected {
+            theme.accent
+        } else {
+            theme.text_muted
+        })
         .child("+")
 }
 
@@ -1050,26 +1018,6 @@ fn line_identity(path: &str, hunk_header: &str, line: &DiffLineProjection) -> Li
         new_line: line.new_line,
         hunk_header: hunk_header.to_string(),
     }
-}
-
-fn empty_state(theme: RelayTheme, title: &'static str, detail: &'static str) -> gpui::Div {
-    div()
-        .rounded_md()
-        .border_1()
-        .border_color(theme.line)
-        .bg(theme.chrome_alt)
-        .p_3()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme.text)
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .child(title),
-        )
-        .child(div().text_xs().text_color(theme.muted).child(detail))
 }
 
 fn review_composer(
@@ -1090,14 +1038,15 @@ fn review_composer(
         .map(|target| format!("{} - {}", target.path(), target.line_label()))
         .unwrap_or_else(|| "No line selected".to_string());
     let can_submit = draft.target.is_some() && !draft.body.trim().is_empty();
+    let has_target = draft.target.is_some();
 
     div()
-        .rounded_sm()
+        .rounded_md()
         .border_1()
-        .border_color(if draft.target.is_some() {
-            theme.selection_line
+        .border_color(if has_target {
+            theme.accent_border
         } else {
-            theme.line
+            theme.border
         })
         .bg(theme.panel)
         .p_3()
@@ -1113,19 +1062,27 @@ fn review_composer(
                 .child(
                     div()
                         .text_sm()
-                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(theme.text)
                         .child("New note"),
                 )
-                .child(review_target_state(theme, draft.target.is_some())),
+                .child(components::badge(
+                    theme,
+                    if has_target { "LINE" } else { "NO LINE" },
+                    if has_target {
+                        Tone::Accent
+                    } else {
+                        Tone::Warning
+                    },
+                )),
         )
         .child(
             div()
                 .min_w_0()
                 .truncate()
-                .font_family("Consolas")
+                .font_family(mono_family())
                 .text_xs()
-                .text_color(theme.muted)
+                .text_color(theme.text_muted)
                 .child(target_label),
         )
         .child(
@@ -1134,18 +1091,18 @@ fn review_composer(
                 .rounded_md()
                 .border_1()
                 .border_color(if draft.body.is_empty() {
-                    theme.line
+                    theme.border
                 } else {
-                    theme.selection_line
+                    theme.border_strong
                 })
-                .bg(theme.chrome)
+                .bg(theme.inset)
                 .px_3()
                 .py_2()
                 .flex()
                 .items_center()
                 .text_sm()
                 .text_color(if draft.body.is_empty() {
-                    theme.muted
+                    theme.text_muted
                 } else {
                     theme.text
                 })
@@ -1153,7 +1110,7 @@ fn review_composer(
                 .tab_index(0)
                 .cursor(CursorStyle::IBeam)
                 .key_context("ReviewDraft")
-                .focus(|style| style.border_color(theme.selection_line))
+                .focus(|style| style.border_color(theme.accent_border))
                 .on_key_down(cx.listener(|this, event, _, cx| {
                     if this.handle_review_draft_key(event, cx) {
                         cx.stop_propagation();
@@ -1174,23 +1131,24 @@ fn review_composer(
                 .child(
                     div()
                         .text_xs()
-                        .text_color(theme.muted)
+                        .text_color(theme.text_muted)
                         .child(review_draft_status(draft)),
                 )
                 .child(if can_submit {
-                    save_review_button(theme, cx).into_any_element()
+                    components::button(
+                        theme,
+                        "Save",
+                        ButtonEmphasis::Primary,
+                        "save-review-draft",
+                        cx,
+                        |this, cx| {
+                            this.dispatch(WorkbenchCommand::SubmitReviewDraft, cx);
+                        },
+                    )
                 } else {
-                    review_state_badge(theme, "DRAFT", theme.muted).into_any_element()
+                    components::badge(theme, "DRAFT", Tone::Muted)
                 }),
         )
-}
-
-fn review_target_state(theme: RelayTheme, selected: bool) -> gpui::Div {
-    if selected {
-        review_state_badge(theme, "LINE", theme.accent)
-    } else {
-        review_state_badge(theme, "NO LINE", theme.warning)
-    }
 }
 
 fn review_draft_status(draft: &ReviewDraftState) -> &'static str {
@@ -1201,44 +1159,6 @@ fn review_draft_status(draft: &ReviewDraftState) -> &'static str {
     }
 }
 
-fn review_state_badge(theme: RelayTheme, label: &'static str, color: gpui::Hsla) -> gpui::Div {
-    div()
-        .h(px(22.0))
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.line)
-        .bg(theme.chrome_alt)
-        .flex()
-        .items_center()
-        .text_xs()
-        .font_weight(gpui::FontWeight::BOLD)
-        .text_color(color)
-        .child(label)
-}
-
-fn save_review_button(theme: RelayTheme, cx: &mut Context<AppShell>) -> impl IntoElement {
-    div()
-        .h(px(24.0))
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.selection_line)
-        .bg(theme.panel)
-        .flex()
-        .items_center()
-        .text_xs()
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(theme.text)
-        .cursor_pointer()
-        .hover(|style| style.bg(theme.selection))
-        .id("save-review-draft")
-        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-            this.dispatch(WorkbenchCommand::SubmitReviewDraft, cx);
-        }))
-        .child("Save")
-}
-
 fn review_comment(
     theme: RelayTheme,
     comment: &ReviewCommentProjection,
@@ -1246,16 +1166,16 @@ fn review_comment(
 ) -> impl IntoElement {
     let path = comment.path.clone();
     div()
-        .rounded_sm()
+        .rounded_md()
         .border_1()
-        .border_color(theme.line)
-        .bg(theme.chrome_alt)
+        .border_color(theme.border)
+        .bg(theme.panel)
         .p_3()
         .flex()
         .flex_col()
         .gap_2()
         .cursor_pointer()
-        .hover(|style| style.bg(theme.panel).border_color(theme.selection_line))
+        .hover(|style| style.bg(theme.hover).border_color(theme.border_strong))
         .id((
             gpui::ElementId::from(comment.id.as_uuid()),
             "review-comment",
@@ -1270,21 +1190,22 @@ fn review_comment(
                 .justify_between()
                 .child(
                     div()
+                        .min_w_0()
+                        .truncate()
                         .text_xs()
-                        .text_color(theme.muted)
+                        .font_family(mono_family())
+                        .text_color(theme.text_muted)
                         .child(format!("{} · {}", comment.path, comment.line_label)),
                 )
-                .child(
-                    div()
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(if comment.delivered {
-                            theme.muted
-                        } else {
-                            theme.warning
-                        })
-                        .child(if comment.delivered { "SENT" } else { "PENDING" }),
-                ),
+                .child(components::badge(
+                    theme,
+                    if comment.delivered { "SENT" } else { "PENDING" },
+                    if comment.delivered {
+                        Tone::Muted
+                    } else {
+                        Tone::Warning
+                    },
+                )),
         )
         .child(
             div()
@@ -1300,23 +1221,49 @@ fn metric_row(theme: RelayTheme, label: &'static str, value: String) -> gpui::Di
         .items_center()
         .justify_between()
         .border_b_1()
-        .border_color(theme.line)
+        .border_color(theme.border)
         .py_2()
-        .child(div().text_color(theme.muted).child(label))
+        .child(div().text_sm().text_color(theme.text_muted).child(label))
         .child(
             div()
+                .text_sm()
                 .text_color(theme.text)
                 .font_weight(gpui::FontWeight::BOLD)
                 .child(value),
         )
 }
 
-fn change_label(theme: RelayTheme, status: ChangeStatus) -> (&'static str, gpui::Hsla) {
+// ---------------------------------------------------------------------------
+// Shared change-status mapping (single source, replacing two duplicate copies).
+// ---------------------------------------------------------------------------
+
+/// One-character status code for a change (A/M/D/R/U).
+fn change_label(status: ChangeStatus) -> &'static str {
     match status {
-        ChangeStatus::Added => ("A", theme.accent),
-        ChangeStatus::Modified => ("M", theme.warning),
-        ChangeStatus::Deleted => ("D", theme.danger),
-        ChangeStatus::Renamed => ("R", theme.warning),
-        ChangeStatus::Untracked => ("U", theme.accent),
+        ChangeStatus::Added => "A",
+        ChangeStatus::Modified => "M",
+        ChangeStatus::Deleted => "D",
+        ChangeStatus::Renamed => "R",
+        ChangeStatus::Untracked => "U",
+    }
+}
+
+/// UI tone for a change status.
+fn change_tone(status: ChangeStatus) -> Tone {
+    match status {
+        ChangeStatus::Added | ChangeStatus::Untracked => Tone::Accent,
+        ChangeStatus::Modified | ChangeStatus::Renamed => Tone::Warning,
+        ChangeStatus::Deleted => Tone::Danger,
+    }
+}
+
+/// Map a domain [`relay_core::StatusTone`] to a UI [`Tone`].
+fn tone_from_status_tone(tone: relay_core::StatusTone) -> Tone {
+    match tone {
+        relay_core::StatusTone::Accent => Tone::Accent,
+        relay_core::StatusTone::Warning => Tone::Warning,
+        relay_core::StatusTone::Danger => Tone::Danger,
+        relay_core::StatusTone::Muted => Tone::Muted,
+        relay_core::StatusTone::Neutral => Tone::Secondary,
     }
 }

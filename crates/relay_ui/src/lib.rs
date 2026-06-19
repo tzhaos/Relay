@@ -1,4 +1,5 @@
 pub mod app_shell;
+pub mod components;
 pub mod diff_pane;
 pub mod preview_pane;
 pub mod task_list;

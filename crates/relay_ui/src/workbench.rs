@@ -44,6 +44,7 @@ pub enum WorkbenchCommand {
     SubmitReviewDraft,
     CreateTask,
     LaunchAgent(TaskId),
+    LaunchAgentTerminal(TerminalSessionId),
     DeliverReview(TaskId),
     ArchiveTask(TaskId),
     AttachWorktreePreview(TaskId),
@@ -125,6 +126,7 @@ pub struct WorkspaceStatusSummary {
 pub struct WorkspaceViewModel {
     pub project_label: String,
     pub project_open: bool,
+    pub workspace_terminal_session_id: Option<TerminalSessionId>,
     pub tasks: Vec<TaskProjection>,
     pub active_task_id: Option<TaskId>,
     pub pane_route: PaneRoute,
@@ -137,26 +139,32 @@ pub struct WorkspaceViewModel {
 
 impl WorkspaceViewModel {
     pub fn new(tasks: Vec<TaskProjection>) -> Self {
-        Self::for_project("Relay".to_string(), tasks)
+        Self::for_project("Relay".to_string(), None, tasks)
     }
 
-    pub fn for_project(project_label: String, tasks: Vec<TaskProjection>) -> Self {
-        Self::from_workspace(project_label, true, tasks)
+    pub fn for_project(
+        project_label: String,
+        workspace_terminal_session_id: Option<TerminalSessionId>,
+        tasks: Vec<TaskProjection>,
+    ) -> Self {
+        Self::from_workspace(project_label, true, workspace_terminal_session_id, tasks)
     }
 
     pub fn detached() -> Self {
-        Self::from_workspace("No project".to_string(), false, Vec::new())
+        Self::from_workspace("No project".to_string(), false, None, Vec::new())
     }
 
     pub fn from_workspace(
         project_label: String,
         project_open: bool,
+        workspace_terminal_session_id: Option<TerminalSessionId>,
         tasks: Vec<TaskProjection>,
     ) -> Self {
         let active_task_id = preferred_active_task_id(&tasks, None);
         Self {
             project_label,
             project_open,
+            workspace_terminal_session_id,
             active_task_id,
             tasks,
             pane_route: PaneRoute::Terminal,
@@ -269,6 +277,9 @@ impl WorkspaceViewModel {
             {
                 active_agent_count += 1;
             }
+        }
+        if self.workspace_terminal_session_id.is_some() {
+            attached_terminal_count += 1;
         }
 
         let runtime_label = if !self.project_open {
@@ -388,6 +399,7 @@ impl WorkspaceViewModel {
             WorkbenchCommand::SubmitReviewDraft => {}
             WorkbenchCommand::CreateTask => {}
             WorkbenchCommand::LaunchAgent(_) => {}
+            WorkbenchCommand::LaunchAgentTerminal(_) => {}
             WorkbenchCommand::DeliverReview(_) => {}
             WorkbenchCommand::ArchiveTask(_) => {}
             WorkbenchCommand::AttachWorktreePreview(_) => {}
@@ -623,6 +635,19 @@ mod tests {
         assert!(!view_model.project_open);
         assert!(!view_model.can_create_task_from_draft());
         assert_eq!(view_model.status_summary().runtime_label, "no project");
+    }
+
+    #[test]
+    fn status_summary_should_count_workspace_terminal() {
+        let view_model = WorkspaceViewModel::for_project(
+            "Relay".to_string(),
+            Some(TerminalSessionId::new()),
+            Vec::new(),
+        );
+        let summary = view_model.status_summary();
+
+        assert_eq!(summary.attached_terminal_count, 1);
+        assert_eq!(summary.runtime_label, "1 terminal");
     }
 
     #[test]

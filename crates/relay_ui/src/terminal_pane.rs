@@ -2,12 +2,13 @@ use gpui::{
     Context, CursorStyle, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
     StatefulInteractiveElement, div, prelude::*, px,
 };
-use relay_core::{TaskProjection, TaskStatus, TerminalSessionId};
+use relay_core::{TaskStatus, TerminalSessionId};
 
 use crate::{
     app_shell::AppShell,
+    components::{self, ButtonEmphasis, Tone},
     preview_pane::preview_content,
-    theme::RelayTheme,
+    theme::{RelayTheme, mono_family, spacing},
     workbench::{PaneRoute, WorkbenchCommand, WorkspaceViewModel},
 };
 
@@ -50,6 +51,13 @@ pub fn terminal_pane(
     } else {
         "DETACHED"
     };
+    let status_tone = if projection.exited {
+        Tone::Muted
+    } else if projection.connected {
+        Tone::Accent
+    } else {
+        Tone::Warning
+    };
 
     let cwd = if projection.cwd.is_empty() {
         "No worktree attached".to_string()
@@ -62,29 +70,36 @@ pub fn terminal_pane(
             && projection.connected
             && !projection.exited
     });
+    let workspace_terminal_session_id = projection.session_id.filter(|session_id| {
+        projection.connected
+            && !projection.exited
+            && Some(*session_id) == view_model.workspace_terminal_session_id
+            && launchable_task.is_none()
+    });
+
     div()
         .flex_1()
         .min_w_0()
         .h_full()
-        .bg(theme.bg)
+        .bg(theme.app_bg)
         .flex()
         .flex_col()
         .child(
             div()
-                .h(px(42.0))
+                .h(px(spacing::PANE_HEADER))
                 .px_3()
                 .flex()
                 .items_center()
                 .justify_between()
                 .border_b_1()
-                .border_color(theme.line)
+                .border_color(theme.border)
                 .bg(theme.chrome)
                 .child(
                     div()
                         .min_w_0()
                         .flex()
-                        .items_center()
-                        .gap_1()
+                        .items_end()
+                        .h(px(spacing::PANE_HEADER))
                         .child(route_tab(
                             theme,
                             view_model.pane_route,
@@ -107,43 +122,48 @@ pub fn terminal_pane(
                         .flex_shrink_0()
                         .flex()
                         .items_center()
-                        .gap_3()
+                        .gap_2()
                         .child(
                             div()
                                 .max_w(px(420.0))
                                 .truncate()
                                 .text_sm()
-                                .text_color(theme.muted)
+                                .font_family(mono_family())
+                                .text_color(theme.text_muted)
                                 .child(cwd.clone()),
                         )
-                        .children(
-                            launchable_task.map(|task| {
-                                launch_agent_button(theme, task, cx).into_any_element()
-                            }),
-                        )
-                        .child(
-                            div()
-                                .h(px(24.0))
-                                .px_2()
-                                .rounded_sm()
-                                .bg(if projection.exited {
-                                    theme.chrome_alt
-                                } else {
-                                    theme.selection
-                                })
-                                .text_xs()
-                                .text_color(if projection.exited {
-                                    theme.muted
-                                } else if projection.connected {
-                                    theme.accent
-                                } else {
-                                    theme.warning
-                                })
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .flex()
-                                .items_center()
-                                .child(status),
-                        ),
+                        .children(launchable_task.map(|task| {
+                            let task_id = task.id;
+                            components::button(
+                                theme,
+                                "Launch Agent",
+                                ButtonEmphasis::Primary,
+                                task_id.as_uuid(),
+                                cx,
+                                move |this, cx| {
+                                    this.dispatch(WorkbenchCommand::LaunchAgent(task_id), cx);
+                                },
+                            )
+                        }))
+                        .children(workspace_terminal_session_id.map(|session_id| {
+                            components::button(
+                                theme,
+                                "Start Agent",
+                                ButtonEmphasis::Secondary,
+                                (
+                                    gpui::ElementId::from(session_id.as_uuid()),
+                                    "launch-terminal-agent",
+                                ),
+                                cx,
+                                move |this, cx| {
+                                    this.dispatch(
+                                        WorkbenchCommand::LaunchAgentTerminal(session_id),
+                                        cx,
+                                    );
+                                },
+                            )
+                        }))
+                        .child(components::badge(theme, status, status_tone)),
                 ),
         )
         .child(match view_model.pane_route {
@@ -190,7 +210,7 @@ fn terminal_content(
         .tab_index(0)
         .cursor(CursorStyle::IBeam)
         .key_context("Terminal")
-        .focus(|style| style.border_color(theme.selection_line))
+        .focus(|style| style.border_color(theme.accent_border))
         .on_key_down(cx.listener(move |this, event, _, cx| {
             if can_write
                 && let Some(session_id) = session_id
@@ -211,7 +231,7 @@ fn terminal_content(
                 .min_h_0()
                 .overflow_y_scroll()
                 .overflow_x_hidden()
-                .font_family("Consolas")
+                .font_family(mono_family())
                 .text_color(theme.terminal_text)
                 .bg(theme.terminal_bg)
                 .p_4()
@@ -295,6 +315,9 @@ fn control_key_sequence(key: &str) -> Option<Vec<u8>> {
     Some(vec![byte])
 }
 
+/// A single Terminal/Preview route tab. Kept as a dedicated function (rather
+/// than the shared `segmented_tabs`) because switching to the Terminal route
+/// must also focus the terminal input, which needs the `window`.
 fn route_tab(
     theme: RelayTheme,
     active_route: PaneRoute,
@@ -304,28 +327,37 @@ fn route_tab(
     cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
     let focus_handle = terminal_focus.clone();
+    let is_active = active_route == route;
     div()
-        .h(px(26.0))
+        .h_full()
         .px_3()
-        .border_1()
-        .border_color(if active_route == route {
-            theme.selection_line
-        } else {
-            theme.line
-        })
-        .bg(if active_route == route {
-            theme.panel
-        } else {
-            theme.chrome
-        })
+        .flex()
+        .items_center()
         .text_sm()
-        .text_color(if active_route == route {
-            theme.text
+        .font_weight(if is_active {
+            gpui::FontWeight::SEMIBOLD
         } else {
-            theme.muted
+            gpui::FontWeight::MEDIUM
+        })
+        .text_color(if is_active {
+            theme.accent
+        } else {
+            theme.text_muted
         })
         .cursor_pointer()
-        .hover(|style| style.bg(theme.panel))
+        .hover(move |style| {
+            style.text_color(if is_active {
+                theme.accent
+            } else {
+                theme.text_secondary
+            })
+        })
+        .border_b_2()
+        .border_color(if is_active {
+            theme.accent
+        } else {
+            gpui::transparent_black()
+        })
         .id(("pane-route", route.index()))
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
             this.dispatch(WorkbenchCommand::SetPaneRoute(route), cx);
@@ -334,33 +366,6 @@ fn route_tab(
             }
         }))
         .child(label)
-}
-
-fn launch_agent_button(
-    theme: RelayTheme,
-    task: &TaskProjection,
-    cx: &mut Context<AppShell>,
-) -> impl IntoElement {
-    let task_id = task.id;
-    div()
-        .h(px(24.0))
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.selection_line)
-        .bg(theme.panel)
-        .text_xs()
-        .text_color(theme.text)
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .flex()
-        .items_center()
-        .cursor_pointer()
-        .hover(|style| style.bg(theme.selection))
-        .id(task_id.as_uuid())
-        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            this.dispatch(WorkbenchCommand::LaunchAgent(task_id), cx);
-        }))
-        .child("Launch")
 }
 
 impl PaneRoute {

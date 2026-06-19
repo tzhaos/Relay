@@ -28,6 +28,9 @@ public static class NativeWindowCapture {
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
     public static extern IntPtr GetWindowDC(IntPtr hWnd);
 
     [DllImport("user32.dll")]
@@ -61,7 +64,7 @@ public static class NativeWindowCapture {
 }
 "@
 
-$matches = New-Object System.Collections.Generic.List[object]
+$windowMatches = New-Object System.Collections.Generic.List[object]
 
 [NativeWindowCapture]::EnumWindows({
     param([IntPtr]$hWnd, [IntPtr]$lParam)
@@ -75,7 +78,7 @@ $matches = New-Object System.Collections.Generic.List[object]
     $text = $title.ToString()
 
     if ($text -match $TitleRegex) {
-        $matches.Add([PSCustomObject]@{
+        $windowMatches.Add([PSCustomObject]@{
             Handle = $hWnd
             Title = $text
         })
@@ -84,11 +87,11 @@ $matches = New-Object System.Collections.Generic.List[object]
     return $true
 }, [IntPtr]::Zero) | Out-Null
 
-if ($matches.Count -eq 0) {
+if ($windowMatches.Count -eq 0) {
     throw "No visible window matched TitleRegex '$TitleRegex'. Start Relay first with: cargo run -p relay_app"
 }
 
-$window = $matches[0]
+$window = $windowMatches[0]
 $rect = [NativeWindowCapture+RECT]::new()
 [void][NativeWindowCapture]::GetWindowRect($window.Handle, [ref]$rect)
 
@@ -99,33 +102,28 @@ if ($width -le 0 -or $height -le 0) {
     throw "Matched window '$($window.Title)' has invalid bounds ${width}x${height}."
 }
 
-$srcDc = [NativeWindowCapture]::GetWindowDC($window.Handle)
-$destDc = [NativeWindowCapture]::CreateCompatibleDC($srcDc)
-$bitmapHandle = [NativeWindowCapture]::CreateCompatibleBitmap($srcDc, $width, $height)
-$oldObject = [NativeWindowCapture]::SelectObject($destDc, $bitmapHandle)
+[void][NativeWindowCapture]::SetForegroundWindow($window.Handle)
+Start-Sleep -Milliseconds 250
 
+$bitmap = New-Object System.Drawing.Bitmap $width, $height
 try {
-    $copyPixelOperation = 0x00CC0020
-    [void][NativeWindowCapture]::BitBlt($destDc, 0, 0, $width, $height, $srcDc, 0, 0, $copyPixelOperation)
-
-    $bitmap = [System.Drawing.Image]::FromHbitmap($bitmapHandle)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     try {
-        $outputPath = Resolve-Path -LiteralPath (Split-Path -Parent $Output) -ErrorAction SilentlyContinue
-        if (-not $outputPath) {
-            New-Item -ItemType Directory -Force (Split-Path -Parent $Output) | Out-Null
-        }
-
-        $fullOutput = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Output)
-        $bitmap.Save($fullOutput, [System.Drawing.Imaging.ImageFormat]::Png)
-        Write-Host "Captured '$($window.Title)' ${width}x${height} -> $fullOutput"
+        $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, [System.Drawing.Size]::new($width, $height))
     }
     finally {
-        $bitmap.Dispose()
+        $graphics.Dispose()
     }
+
+    $outputPath = Resolve-Path -LiteralPath (Split-Path -Parent $Output) -ErrorAction SilentlyContinue
+    if (-not $outputPath) {
+        New-Item -ItemType Directory -Force (Split-Path -Parent $Output) | Out-Null
+    }
+
+    $fullOutput = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Output)
+    $bitmap.Save($fullOutput, [System.Drawing.Imaging.ImageFormat]::Png)
+    Write-Host "Captured '$($window.Title)' ${width}x${height} -> $fullOutput"
 }
 finally {
-    [void][NativeWindowCapture]::SelectObject($destDc, $oldObject)
-    [void][NativeWindowCapture]::DeleteObject($bitmapHandle)
-    [void][NativeWindowCapture]::DeleteDC($destDc)
-    [void][NativeWindowCapture]::ReleaseDC($window.Handle, $srcDc)
+    $bitmap.Dispose()
 }

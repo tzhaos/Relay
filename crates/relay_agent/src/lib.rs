@@ -154,8 +154,8 @@ impl AgentRegistry {
     pub fn built_in() -> Self {
         Self {
             adapters: vec![
-                Box::new(ClaudeAdapter::default()),
                 Box::new(CodexAdapter::default()),
+                Box::new(ClaudeAdapter::default()),
                 Box::new(GeminiAdapter::default()),
             ],
             stale_after: Duration::from_secs(120),
@@ -266,7 +266,7 @@ mod tests {
 
         assert_eq!(
             kinds,
-            vec![AgentKind::Claude, AgentKind::Codex, AgentKind::Gemini]
+            vec![AgentKind::Codex, AgentKind::Claude, AgentKind::Gemini]
         );
     }
 
