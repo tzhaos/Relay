@@ -23,12 +23,9 @@ mod workbench_demo;
 use gpui::{
     App, AppContext, Application, Bounds, Context, Entity, FocusHandle, FontWeight,
     InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Window, WindowBounds, WindowOptions, div, prelude::FluentBuilder, px, size,
+    Window, WindowBounds, WindowDecorations, WindowOptions, div, prelude::FluentBuilder, px, size,
 };
-use relay_ui_kit::{
-    ActiveTheme, KitAssets,
-    theme::{self, space},
-};
+use relay_ui_kit::{ActiveTheme, KitAssets, TitleBar, WorkspaceBreadcrumb, theme};
 
 /// Which gallery page is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,41 +50,28 @@ impl GalleryApp {
     }
 
     fn top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = *cx.theme();
-        div()
-            .h(px(space::TITLE_BAR))
-            .flex_shrink_0()
-            .px_3()
-            .flex()
-            .items_center()
-            .gap_3()
-            .border_b_1()
-            .border_color(theme.border)
-            .bg(theme.chrome)
-            .child(
-                // App identity mark.
+        TitleBar::new("Relay")
+            .project("UI Kit")
+            .center(WorkspaceBreadcrumb::new(vec![
+                "Relay".into(),
+                "Gallery".into(),
+                self.page_label().into(),
+            ]))
+            .actions(
                 div()
-                    .size(px(22.0))
-                    .rounded(px(theme::radius::MD))
-                    .bg(theme.accent)
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .text_color(theme.on_accent)
-                    .font_weight(FontWeight::BOLD)
-                    .text_xs()
-                    .child("R"),
+                    .gap_1()
+                    .child(self.page_tab(Page::Workbench, "Workbench", cx))
+                    .child(self.page_tab(Page::Components, "Components", cx)),
             )
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.text)
-                    .child("Relay UI Kit"),
-            )
-            .child(div().flex_1())
-            .child(self.page_tab(Page::Workbench, "Workbench", cx))
-            .child(self.page_tab(Page::Components, "Components", cx))
+    }
+
+    fn page_label(&self) -> &'static str {
+        match self.page {
+            Page::Workbench => "Workbench",
+            Page::Components => "Components",
+        }
     }
 
     fn page_tab(
@@ -169,6 +153,10 @@ fn main() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: None,
+                    window_decorations: Some(WindowDecorations::Client),
+                    window_min_size: Some(size(px(1180.0), px(780.0))),
+                    app_id: Some("relay-gallery".to_string()),
                     ..Default::default()
                 },
                 |_, cx| cx.new(GalleryApp::new),

@@ -17,25 +17,39 @@
 
 pub mod button;
 pub mod choice;
+pub mod command;
 pub mod controls;
 pub mod display;
 pub mod icon;
 pub mod input;
+pub mod launcher;
 pub mod overlay;
 pub mod row;
+pub mod shell;
 pub mod structure;
+pub mod terminal;
 pub mod theme;
 pub mod tone;
 
 // Flat re-exports so callers write `relay_ui_kit::Button` etc.
 pub use button::{Button, ButtonVariant, IconButton};
 pub use choice::{Checkbox, Radio, Toggle};
+pub use command::{CommandPalette, CommandRow, KeyboardShortcut};
 pub use controls::{PanelHeader, SearchField, Segment, SegmentedControl};
 pub use display::{Badge, BadgeStyle, Divider, EmptyState, StatusDot};
 pub use icon::{Icon, IconName, IconSize, KitAssets};
 pub use input::{TextInput, TextInputAction, TextInputState};
+pub use launcher::{LauncherItem, LauncherItemKind, LauncherMenu};
 pub use overlay::{Menu, MenuItem, Overlay, TooltipBody, overlay};
 pub use row::{NavRow, TaskRow, TaskRowData, TreeRow};
+pub use shell::{
+    AppShell, Pane, PaneSurface, PaneToolbar, PaneWidth, SplitAxis, SplitPane, StatusBar,
+    StatusItem, TitleBar, TopToolbar, WindowControls, WorkspaceBreadcrumb,
+};
 pub use structure::{KeyValue, ListSection, Tab, Tabs};
+pub use terminal::{
+    AgentQuickLaunch, TerminalLine, TerminalLineStyle, TerminalSessionRow, TerminalStatusBadge,
+    TerminalSurface, TerminalTab, TerminalToolbar,
+};
 pub use theme::{ActiveTheme, Theme, radius, space};
 pub use tone::Tone;

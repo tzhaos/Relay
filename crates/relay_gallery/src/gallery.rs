@@ -18,6 +18,10 @@ use relay_ui_kit::{
 
 use crate::GalleryApp;
 
+mod product_samples;
+
+use product_samples::{command_sample, launcher_sample, shell_sample, terminal_sample};
+
 /// Interactive state for the Components page.
 pub struct GalleryState {
     pub name_input: TextInputState,
@@ -28,6 +32,9 @@ pub struct GalleryState {
     pub auto_archive: bool,
     pub theme_choice: &'static str,
     pub seg_tab: &'static str,
+    pub terminal_session: &'static str,
+    pub launcher_choice: &'static str,
+    pub shell_split_width: f32,
     pub menu_open: bool,
 }
 
@@ -42,6 +49,9 @@ impl GalleryState {
             auto_archive: false,
             theme_choice: "system",
             seg_tab: "diff",
+            terminal_session: "codex",
+            launcher_choice: "powershell",
+            shell_split_width: 260.0,
             menu_open: false,
         }
     }
@@ -138,13 +148,43 @@ pub fn render(
                         .child(
                             Button::new("btn-primary", "Launch Agent")
                                 .primary()
-                                .icon(IconName::Play),
+                                .icon(IconName::Play)
+                                .on_click({
+                                    let host = host.clone();
+                                    move |_event, _window, cx| {
+                                        host.update(cx, |this, cx| {
+                                            this.gallery.terminal_session = "codex";
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
                         )
-                        .child(Button::new("btn-secondary", "Refresh").icon(IconName::RefreshCw))
+                        .child(
+                            Button::new("btn-secondary", "Refresh")
+                                .icon(IconName::RefreshCw)
+                                .on_click({
+                                    let host = host.clone();
+                                    move |_event, _window, cx| {
+                                        host.update(cx, |this, cx| {
+                                            this.gallery.search_input.clear();
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
+                        )
                         .child(
                             Button::new("btn-ghost", "Archive")
                                 .ghost()
-                                .icon(IconName::Archive),
+                                .icon(IconName::Archive)
+                                .on_click({
+                                    let host = host.clone();
+                                    move |_event, _window, cx| {
+                                        host.update(cx, |this, cx| {
+                                            this.gallery.auto_archive = !this.gallery.auto_archive;
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
                         )
                         .child(
                             Button::new("btn-disabled", "Disabled")
@@ -157,10 +197,52 @@ pub fn render(
                     cx,
                     "Icon buttons",
                     strip()
-                        .child(IconButton::new("ib-filter", IconName::ListFilter))
-                        .child(IconButton::new("ib-refresh", IconName::RefreshCw))
-                        .child(IconButton::new("ib-settings", IconName::Settings))
-                        .child(IconButton::new("ib-active", IconName::PanelLeft).active(true)),
+                        .child(
+                            IconButton::new("ib-filter", IconName::ListFilter).on_click({
+                                let host = host.clone();
+                                move |_event, _window, cx| {
+                                    host.update(cx, |this, cx| {
+                                        this.gallery.seg_tab = "files";
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                        )
+                        .child(
+                            IconButton::new("ib-refresh", IconName::RefreshCw).on_click({
+                                let host = host.clone();
+                                move |_event, _window, cx| {
+                                    host.update(cx, |this, cx| {
+                                        this.gallery.search_input.clear();
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                        )
+                        .child(
+                            IconButton::new("ib-settings", IconName::Settings).on_click({
+                                let host = host.clone();
+                                move |_event, _window, cx| {
+                                    host.update(cx, |this, cx| {
+                                        this.gallery.menu_open = !this.gallery.menu_open;
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                        )
+                        .child(
+                            IconButton::new("ib-active", IconName::PanelLeft)
+                                .active(true)
+                                .on_click({
+                                    let host = host.clone();
+                                    move |_event, _window, cx| {
+                                        host.update(cx, |this, cx| {
+                                            this.gallery.seg_tab = "review";
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
+                        ),
                 ))
                 // Checkboxes + toggles ----------------------------------------
                 .child(section(
@@ -300,9 +382,9 @@ pub fn render(
                                 .selected(true),
                         )
                         .child(NavRow::new(
-                            "nav-auto",
-                            IconName::CalendarClock,
-                            "Automation",
+                            "nav-terminals",
+                            IconName::Terminal,
+                            "Terminals",
                         ))
                         .child(NavRow::new("nav-search", IconName::Search, "Search")),
                 ))
@@ -365,6 +447,30 @@ pub fn render(
                                 review: 2,
                             },
                         )),
+                ))
+                // Shell / split panes ----------------------------------------
+                .child(section(
+                    cx,
+                    "Shell & split panes",
+                    shell_sample(state, host),
+                ))
+                // Terminal product components --------------------------------
+                .child(section(
+                    cx,
+                    "Terminal & agent",
+                    terminal_sample(state, host, theme),
+                ))
+                // Command palette + launcher ---------------------------------
+                .child(section(
+                    cx,
+                    "Command & launcher",
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap_3()
+                        .flex_wrap()
+                        .child(command_sample(state, host))
+                        .child(launcher_sample(state, host, theme)),
                 ))
                 // Divider + empty state ---------------------------------------
                 .child(section(
