@@ -5,7 +5,7 @@ use gpui::{
 
 use crate::{
     icon::{Icon, IconName, IconSize},
-    theme::{ActiveTheme, radius},
+    theme::ActiveTheme,
 };
 
 /// A compact toolbar for title bars or pane headers.
@@ -108,7 +108,7 @@ impl RenderOnce for WorkspaceBreadcrumb {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
         let fg = if self.active {
-            theme.text_secondary
+            theme.text_muted
         } else {
             theme.text_muted
         };
@@ -116,19 +116,6 @@ impl RenderOnce for WorkspaceBreadcrumb {
         let mut row = div()
             .h(px(24.0))
             .max_w(px(560.0))
-            .px_2()
-            .rounded(px(radius::MD))
-            .border_1()
-            .border_color(if self.active {
-                theme.accent_border
-            } else {
-                theme.border
-            })
-            .bg(if self.active {
-                theme.accent_bg
-            } else {
-                theme.panel_alt
-            })
             .flex()
             .items_center()
             .gap_1()
@@ -141,12 +128,12 @@ impl RenderOnce for WorkspaceBreadcrumb {
                     .min_w_0()
                     .truncate()
                     .font_weight(if index == last {
-                        FontWeight::SEMIBOLD
+                        FontWeight::MEDIUM
                     } else {
                         FontWeight::MEDIUM
                     })
                     .text_color(if index == last && self.active {
-                        theme.accent
+                        theme.text_secondary
                     } else {
                         fg
                     })
