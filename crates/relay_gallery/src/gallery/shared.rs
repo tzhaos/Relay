@@ -1,7 +1,11 @@
-use gpui::{Context, Entity, FocusHandle, FontWeight, IntoElement, ParentElement, Styled, div, px};
+use gpui::{
+    Context, Entity, FocusHandle, FontWeight, IntoElement, ParentElement, Styled, div,
+    prelude::FluentBuilder, px,
+};
 use relay_ui_kit::{
-    ActiveTheme, Button, Checkbox, Icon, IconName, IconSize, Menu, MenuItem, Radio, StatusDot,
-    TextInput, TextInputAction, TextInputState, Toggle, Tone, overlay, space,
+    ActiveTheme, BranchActionKind, BranchActionsMenu, BranchOption, BranchSelector, Checkbox, Icon,
+    IconButton, IconName, IconSize, Radio, StatusDot, TextInput, TextInputAction, TextInputState,
+    Toggle, Tone, overlay, space,
 };
 
 use crate::GalleryApp;
@@ -123,54 +127,109 @@ pub(super) fn radio_row(
     })
 }
 
-pub(super) fn dropdown_trigger(host: &Entity<GalleryApp>, open: bool) -> impl IntoElement {
-    Button::new("dd-trigger", "Branch actions")
-        .icon(if open {
-            IconName::ChevronDown
-        } else {
-            IconName::ChevronRight
-        })
+pub(super) fn branch_controls(
+    host: &Entity<GalleryApp>,
+    selected: &'static str,
+    picker_open: bool,
+    actions_open: bool,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(branch_selector(host, selected, picker_open))
+        .child(
+            div()
+                .relative()
+                .child(branch_actions_button(host, actions_open))
+                .when(actions_open, |this| this.child(branch_actions_menu(host))),
+        )
+}
+
+fn branch_selector(
+    host: &Entity<GalleryApp>,
+    selected: &'static str,
+    open: bool,
+) -> impl IntoElement {
+    BranchSelector::new(
+        "gallery-branch-selector",
+        selected,
+        vec![
+            BranchOption::new("main", "main").detail("default branch"),
+            BranchOption::new("ui-kit-branch-controls", "ui-kit/branch-controls")
+                .detail("current worktree"),
+            BranchOption::new("terminal-rio-adapter", "terminal/rio-adapter")
+                .detail("terminal renderer spike"),
+            BranchOption::new("review-viewers", "review/viewers").detail("diff and file views"),
+        ],
+    )
+    .open(open)
+    .on_toggle({
+        let host = host.clone();
+        move |_event, _window, cx| {
+            host.update(cx, |this, cx| {
+                this.gallery.branch_picker_open = !this.gallery.branch_picker_open;
+                this.gallery.branch_actions_open = false;
+                cx.notify();
+            });
+        }
+    })
+    .on_select({
+        let host = host.clone();
+        move |key, _window, cx| {
+            host.update(cx, |this, cx| {
+                this.gallery.branch_choice = key;
+                this.gallery.branch_picker_open = false;
+                this.gallery.branch_event = format!("Switched to {key}");
+                cx.notify();
+            });
+        }
+    })
+    .on_action({
+        let host = host.clone();
+        move |key, _window, cx| {
+            host.update(cx, |this, cx| {
+                this.gallery.branch_picker_open = false;
+                this.gallery.branch_event = match key {
+                    "branch:create" => "Create branch requested".into(),
+                    "worktree:create" => "New worktree requested".into(),
+                    _ => format!("Branch picker action: {key}"),
+                };
+                cx.notify();
+            });
+        }
+    })
+}
+
+fn branch_actions_button(host: &Entity<GalleryApp>, open: bool) -> impl IntoElement {
+    IconButton::new("gallery-branch-actions", IconName::Ellipsis)
+        .active(open)
         .on_click({
             let host = host.clone();
             move |_event, _window, cx| {
                 host.update(cx, |this, cx| {
-                    this.gallery.menu_open = !this.gallery.menu_open;
+                    this.gallery.branch_actions_open = !this.gallery.branch_actions_open;
+                    this.gallery.branch_picker_open = false;
                     cx.notify();
                 });
             }
         })
 }
 
-pub(super) fn dropdown_menu(host: &Entity<GalleryApp>) -> impl IntoElement {
-    let close = {
-        let host = host.clone();
-        move |cx: &mut gpui::App| {
-            host.update(cx, |this, cx| {
-                this.gallery.menu_open = false;
-                cx.notify();
-            });
-        }
-    };
-    let close_a = close.clone();
-    let close_b = close.clone();
-    let close_c = close;
-    overlay(Menu::new(
-        "dd-menu",
-        vec![
-            MenuItem::new("Checkout")
-                .icon(IconName::GitBranch)
-                .on_click(move |_e, _w, cx| close_a(cx)),
-            MenuItem::new("New worktree")
-                .icon(IconName::FolderPlus)
-                .on_click(move |_e, _w, cx| close_b(cx)),
-            MenuItem::separator(),
-            MenuItem::new("Delete branch")
-                .icon(IconName::Archive)
-                .danger()
-                .on_click(move |_e, _w, cx| close_c(cx)),
-        ],
-    ))
-    .offset(0.0, 34.0)
+fn branch_actions_menu(host: &Entity<GalleryApp>) -> impl IntoElement {
+    overlay(
+        BranchActionsMenu::new("gallery-branch-actions-menu").on_select({
+            let host = host.clone();
+            move |action: BranchActionKind, _window, cx| {
+                host.update(cx, |this, cx| {
+                    this.gallery.branch_actions_open = false;
+                    this.gallery.branch_event = action.label().to_string();
+                    cx.notify();
+                });
+            }
+        }),
+    )
+    .offset(-204.0, 32.0)
 }
 
 pub(super) fn dot_label(theme: relay_ui_kit::Theme, tone: Tone, label: &str) -> impl IntoElement {

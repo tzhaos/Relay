@@ -1,10 +1,10 @@
-use gpui::{Context, Entity, IntoElement, ParentElement, Styled, div, prelude::FluentBuilder, px};
+use gpui::{Context, Entity, IntoElement, ParentElement, Styled, div, px};
 use relay_ui_kit::{CommandRow, IconName, KeyboardShortcut, Theme};
 
 use super::{
     GalleryState,
     product_samples::{command_sample, launcher_sample},
-    shared::{dropdown_menu, dropdown_trigger, scene_stack, section, strip},
+    shared::{branch_controls, scene_stack, section, strip},
 };
 use crate::GalleryApp;
 
@@ -51,11 +51,23 @@ pub(super) fn render(
         ))
         .child(section(
             cx,
-            "Context menu",
+            "Branch controls",
             div()
-                .relative()
-                .child(dropdown_trigger(host, state.menu_open))
-                .when(state.menu_open, |this| this.child(dropdown_menu(host))),
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(branch_controls(
+                    host,
+                    state.branch_choice,
+                    state.branch_picker_open,
+                    state.branch_actions_open,
+                ))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(format!("Branch event: {}", state.branch_event)),
+                ),
         ))
         .child(section(
             cx,

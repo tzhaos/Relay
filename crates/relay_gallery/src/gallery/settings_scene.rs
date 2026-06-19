@@ -1,14 +1,9 @@
-use gpui::{
-    Context, Entity, IntoElement, ParentElement, Styled, Window, div, prelude::FluentBuilder, px,
-};
+use gpui::{Context, Entity, IntoElement, ParentElement, Styled, Window, div, px};
 use relay_ui_kit::{Badge, EmptyState, IconName, Theme, Tone};
 
 use super::{
     GalleryState,
-    shared::{
-        checkbox_row, dropdown_menu, dropdown_trigger, radio_row, scene_stack, section, strip,
-        text_input_field, toggle_row,
-    },
+    shared::{checkbox_row, radio_row, scene_stack, section, strip, text_input_field, toggle_row},
 };
 use crate::GalleryApp;
 
@@ -74,13 +69,6 @@ pub(super) fn render(
                         ))
                         .child(radio_row(host, "light", "Always light", state.theme_choice))
                         .child(radio_row(host, "dark", "Always dark", state.theme_choice)),
-                )
-                .child(
-                    div()
-                        .relative()
-                        .pt_1()
-                        .child(dropdown_trigger(host, state.menu_open))
-                        .when(state.menu_open, |this| this.child(dropdown_menu(host))),
                 ),
         ))
         .child(section(

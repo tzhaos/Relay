@@ -43,9 +43,12 @@ pub struct GalleryState {
     pub seg_tab: &'static str,
     pub terminal_session: &'static str,
     pub launcher_choice: &'static str,
+    pub branch_choice: &'static str,
+    pub branch_event: String,
     pub viewer_tab: &'static str,
     pub shell_split_width: f32,
-    pub menu_open: bool,
+    pub branch_picker_open: bool,
+    pub branch_actions_open: bool,
 }
 
 impl GalleryState {
@@ -61,9 +64,12 @@ impl GalleryState {
             seg_tab: "diff",
             terminal_session: "codex",
             launcher_choice: "powershell",
+            branch_choice: "ui-kit-branch-controls",
+            branch_event: "Ready".into(),
             viewer_tab: "diff",
             shell_split_width: 260.0,
-            menu_open: false,
+            branch_picker_open: false,
+            branch_actions_open: false,
         }
     }
 }

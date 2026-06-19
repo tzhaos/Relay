@@ -20,6 +20,7 @@ pub mod choice;
 pub mod command;
 pub mod controls;
 pub mod display;
+pub mod git;
 pub mod icon;
 pub mod input;
 pub mod launcher;
@@ -38,6 +39,9 @@ pub use choice::{Checkbox, Radio, Toggle};
 pub use command::{CommandPalette, CommandRow, KeyboardShortcut};
 pub use controls::{PanelHeader, SearchField, Segment, SegmentedControl};
 pub use display::{Badge, BadgeStyle, Divider, EmptyState, StatusDot};
+pub use git::{
+    BranchActionKind, BranchActionsMenu, BranchOption, BranchPickerAction, BranchSelector,
+};
 pub use icon::{Icon, IconName, IconSize, KitAssets};
 pub use input::{TextInput, TextInputAction, TextInputState};
 pub use launcher::{LauncherItem, LauncherItemKind, LauncherMenu};

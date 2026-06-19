@@ -144,7 +144,7 @@ fn icon_button_samples(host: &Entity<GalleryApp>) -> impl IntoElement {
                 let host = host.clone();
                 move |_event, _window, cx| {
                     host.update(cx, |this, cx| {
-                        this.gallery.menu_open = !this.gallery.menu_open;
+                        this.gallery.launcher_choice = "settings";
                         cx.notify();
                     });
                 }
