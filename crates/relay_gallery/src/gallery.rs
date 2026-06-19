@@ -19,8 +19,10 @@ use relay_ui_kit::{
 use crate::GalleryApp;
 
 mod product_samples;
+mod viewer_samples;
 
 use product_samples::{command_sample, launcher_sample, shell_sample, terminal_sample};
+use viewer_samples::viewer_sample;
 
 /// Interactive state for the Components page.
 pub struct GalleryState {
@@ -34,6 +36,7 @@ pub struct GalleryState {
     pub seg_tab: &'static str,
     pub terminal_session: &'static str,
     pub launcher_choice: &'static str,
+    pub viewer_tab: &'static str,
     pub shell_split_width: f32,
     pub menu_open: bool,
 }
@@ -51,6 +54,7 @@ impl GalleryState {
             seg_tab: "diff",
             terminal_session: "codex",
             launcher_choice: "powershell",
+            viewer_tab: "diff",
             shell_split_width: 260.0,
             menu_open: false,
         }
@@ -472,6 +476,8 @@ pub fn render(
                         .child(command_sample(state, host))
                         .child(launcher_sample(state, host, theme)),
                 ))
+                // Read-only file viewers -------------------------------------
+                .child(section(cx, "File viewers", viewer_sample(state, host)))
                 // Divider + empty state ---------------------------------------
                 .child(section(
                     cx,

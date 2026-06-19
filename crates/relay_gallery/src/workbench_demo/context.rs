@@ -1,10 +1,8 @@
-use gpui::{
-    Entity, FontWeight, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
-    Styled, Window, div, prelude::FluentBuilder, px,
-};
+use gpui::{Entity, IntoElement, ParentElement, Styled, Window, div, prelude::FluentBuilder, px};
 use relay_ui_kit::{
-    Badge, IconButton, IconName, Pane, PaneSurface, PaneWidth, PanelHeader, StatusDot, Tab, Tabs,
-    TerminalSessionRow, TextInput, TextInputAction, Theme, Tone, TreeRow, theme,
+    Badge, DiffView, FileKind, FileView, IconButton, IconName, Pane, PaneSurface, PaneWidth,
+    PanelHeader, StatusDot, Tab, Tabs, TerminalSessionRow, TextInput, TextInputAction, Theme, Tone,
+    TreeRow,
 };
 
 use super::{
@@ -51,7 +49,7 @@ pub(super) fn right_context(
         .when(tab == "files", |this| {
             this.child(files_tab(state, host, window))
         })
-        .when(tab == "diff", |this| this.child(diff_tab(theme)))
+        .when(tab == "diff", |this| this.child(diff_tab()))
         .when(tab == "review", |this| {
             this.child(review_tab(state, host, theme))
         });
@@ -151,51 +149,15 @@ fn files_tab(
         )
 }
 
-fn diff_tab(theme: Theme) -> impl IntoElement {
-    let hunk = |sign: &'static str, color, text: &'static str| {
-        div()
-            .flex()
-            .gap_2()
-            .font_family(theme::mono_family())
-            .text_size(px(12.0))
-            .child(
-                div()
-                    .w(px(12.0))
-                    .flex_shrink_0()
-                    .text_color(color)
-                    .child(sign),
-            )
-            .child(div().text_color(theme.text_secondary).child(text))
-    };
-
-    div()
-        .id("ctx-diff-preview")
-        .flex_1()
-        .min_h_0()
-        .overflow_y_scroll()
-        .p_3()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(theme.text_muted)
-                .child("crates/relay_ui_kit/src/shell/split_pane.rs"),
+fn diff_tab() -> impl IntoElement {
+    div().flex_1().min_h_0().p_2().child(
+        FileView::new(
+            "crates/relay_ui_kit/src/shell/split_pane.rs",
+            FileKind::Diff,
+            DiffView::from_text_diff(DIFF_OLD, DIFF_NEW),
         )
-        .child(hunk("+", theme.accent, "pub fn on_resize(...) -> Self"))
-        .child(hunk(
-            "+",
-            theme.accent,
-            "this.workbench.terminal_width = next;",
-        ))
-        .child(hunk("-", theme.danger, "static right context width"))
-        .child(hunk(
-            " ",
-            theme.text_muted,
-            "Split state remains owned by the host view.",
-        ))
+        .detail("+4 -1"),
+    )
 }
 
 fn review_tab(state: &WorkbenchState, host: &Entity<GalleryApp>, theme: Theme) -> impl IntoElement {
@@ -252,3 +214,22 @@ fn review_tab(state: &WorkbenchState, host: &Entity<GalleryApp>, theme: Theme) -
                 .child("workbench_demo.rs: terminal launcher state should stay host-owned."),
         )
 }
+
+const DIFF_OLD: &str = r#"let center_and_context = SplitPane::new("center-context-split", center, right)
+    .first_size(720.0)
+    .min_sizes(560.0, 320.0);
+"#;
+
+const DIFF_NEW: &str = r#"let center_and_context = SplitPane::new("center-context-split", center, right)
+    .first_size(state.terminal_width)
+    .min_sizes(560.0, 320.0)
+    .on_resize({
+        let host = host.clone();
+        move |next, _window, cx| {
+            host.update(cx, |this, cx| {
+                this.workbench.terminal_width = next;
+                cx.notify();
+            });
+        }
+    });
+"#;

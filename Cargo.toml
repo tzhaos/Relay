@@ -27,6 +27,7 @@ anyhow = "1"
 directories = "6"
 gpui = "0.2.2"
 open = "5.3.5"
+pulldown-cmark = "0.13.4"
 regex = "1.12.2"
 relay_agent = { path = "crates/relay_agent" }
 relay_core = { path = "crates/relay_core" }

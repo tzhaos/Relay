@@ -30,6 +30,7 @@ pub mod structure;
 pub mod terminal;
 pub mod theme;
 pub mod tone;
+pub mod viewer;
 
 // Flat re-exports so callers write `relay_ui_kit::Button` etc.
 pub use button::{Button, ButtonVariant, IconButton};
@@ -53,3 +54,6 @@ pub use terminal::{
 };
 pub use theme::{ActiveTheme, Theme, radius, space};
 pub use tone::Tone;
+pub use viewer::{
+    CodeView, DiffHunk, DiffLine, DiffLineKind, DiffView, FileKind, FileView, MarkdownView,
+};

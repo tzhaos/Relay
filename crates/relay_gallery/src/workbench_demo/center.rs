@@ -1,10 +1,9 @@
-use gpui::{
-    Entity, FontWeight, IntoElement, ParentElement, Styled, Window, div, prelude::FluentBuilder, px,
-};
+use gpui::{Entity, IntoElement, ParentElement, Styled, Window, div, prelude::FluentBuilder, px};
 use relay_ui_kit::{
-    AgentQuickLaunch, Button, IconButton, IconName, LauncherItem, LauncherItemKind, LauncherMenu,
-    Pane, PaneSurface, PaneWidth, PanelHeader, Segment, SegmentedControl, TerminalStatusBadge,
-    TerminalSurface, TerminalTab, TerminalToolbar, Theme,
+    AgentQuickLaunch, Button, FileKind, FileView, IconButton, IconName, LauncherItem,
+    LauncherItemKind, LauncherMenu, MarkdownView, Pane, PaneSurface, PaneWidth, PanelHeader,
+    Segment, SegmentedControl, TerminalStatusBadge, TerminalSurface, TerminalTab, TerminalToolbar,
+    Theme,
     theme::{self},
 };
 
@@ -35,9 +34,7 @@ pub(super) fn center_pane(
         .when(route == "terminal", |this| {
             this.child(terminal_body(state, host, theme))
         })
-        .when(route == "preview", |this| {
-            this.child(preview_body(active, theme))
-        });
+        .when(route == "preview", |this| this.child(preview_body(active)));
 
     Pane::new(PaneWidth::Flex, body)
         .surface(PaneSurface::Panel)
@@ -245,26 +242,36 @@ fn agent_quick_launches(host: &Entity<GalleryApp>, theme: Theme) -> impl IntoEle
         )
 }
 
-fn preview_body(active: &DemoTask, theme: Theme) -> impl IntoElement {
-    div()
-        .size_full()
-        .bg(theme.panel)
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(theme.text_secondary)
-                .child(format!("Preview target for {}", active.branch)),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child("No preview target is selected for this task."),
-        )
+fn preview_body(active: &DemoTask) -> impl IntoElement {
+    div().size_full().p_2().child(FileView::new(
+        format!("docs/tasks/{}.md", active.branch.replace('/', "-")),
+        FileKind::Markdown,
+        MarkdownView::new(task_preview(active)),
+    ))
+}
+
+fn task_preview(active: &DemoTask) -> String {
+    format!(
+        r#"# {}
+
+Branch: `{}`
+
+Worktree: `{}`
+
+- Status: {}
+- Changed files: {}
+- Review notes: {}
+
+```text
+terminal session: {}
+```
+"#,
+        active.title,
+        active.branch,
+        active.worktree,
+        active.status,
+        active.changed,
+        active.review,
+        active.session_key
+    )
 }
